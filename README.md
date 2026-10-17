@@ -1,6 +1,6 @@
 # barberia-api
 
-API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas/JWT, catálogo, reservas propias y operación de agenda: atención inmediata de invitados, agenda del personal, estados, cancelaciones y bloqueos individuales**. Contadores, advertencias, bloqueos comerciales, vinculación de invitados, reprogramación, inventario, ventas y pagos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos y ejemplos: [catálogo](docs/catalogo.md) y [citas](docs/citas.md). Mercado Pago será el proveedor de pagos futuro; todavía no hay integración.
+API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas/JWT, catálogo, reservas, operación de agenda e incidencias consecutivas de citas con advertencia, bloqueo comercial y reactivación administrativa**. Incidencias de pedidos, vinculación de invitados, reprogramación, inventario, ventas, pagos y reembolsos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos y ejemplos: [catálogo](docs/catalogo.md) y [citas](docs/citas.md). Mercado Pago será el proveedor de pagos futuro; todavía no hay integración.
 
 ## Tecnologías y decisiones
 
@@ -75,7 +75,7 @@ El ejemplo no imprime ni guarda secretos. En un entorno persistente, suministrar
 
 Flyway aplica `V1__create_accounts_and_roles.sql`: cuentas, catálogo de roles, relación de varios roles y restricciones de correo único y normalizado. Después, Hibernate comprueba las entidades con `ddl-auto=validate`. La inicialización SQL está desactivada, `clean-disabled=true` y `baseline-on-migrate=false`. No se borran esquemas ni se adopta automáticamente un esquema previo sin historial de migraciones; si Flyway detecta ese caso, revisar la base antes de continuar. No usar `ddl-auto=update` ni editar una migración ya aplicada: añadir una nueva versión.
 
-V2 (`V2__business_catalog.sql`) añade sucursales, horarios, servicios y perfiles, con los datos iniciales acordados. V3 añade citas y precios históricos. V4 (`V4__agenda_operations.sql`) adapta citas existentes, incorpora estados, invitados, auditoría, bloqueos y una tabla común de ocupaciones con exclusión PostgreSQL contra cualquier solapamiento. V1/V2/V3 permanecen intactas; una base nueva recibe las cuatro migraciones.
+V2 (`V2__business_catalog.sql`) añade sucursales, horarios, servicios y perfiles, con los datos iniciales acordados. V3 añade citas y precios históricos. V4 (`V4__agenda_operations.sql`) adapta citas existentes, incorpora estados, invitados, auditoría, bloqueos y una tabla común de ocupaciones con exclusión PostgreSQL contra cualquier solapamiento. V5 añade contador de incidencias de citas, bloqueo comercial e historial ordenado de eventos; conserva V1–V4 intactas. Una base nueva recibe las cinco migraciones.
 
 V4 necesita `btree_gist`: la instala en la base conectada si el usuario de migración tiene permisos; alternativamente puede preinstalarla su administrador. No cambia privilegios globales. Consultar [instalación, permisos y garantía de concurrencia](docs/citas.md#extensión-y-permisos) antes de migrar. La nueva protección cubre intervalos distintos que se solapan, no solo comienzos iguales.
 
@@ -128,7 +128,7 @@ Los errores usan el mismo formato, sin revelar datos internos:
 | 404 | Recurso de catálogo inexistente o no disponible para esa consulta |
 | 409 | Correo ya registrado, perfil duplicado o asignación a sucursal inactiva |
 
-No hay refresh tokens ni revocación individual de tokens en esta versión. Su vigencia está limitada por `JWT_EXPIRATION_SECONDS`; cerrar sesión en un cliente consiste en descartar el token, que permanece válido hasta expirar salvo desactivación de cuenta o rotación global de clave. El campo `active` representa acceso a la cuenta: los futuros bloqueos para reservar/comprar se modelarán aparte y no impedirán iniciar sesión ni consultar compromisos existentes.
+No hay refresh tokens ni revocación individual de tokens en esta versión. Su vigencia está limitada por `JWT_EXPIRATION_SECONDS`; cerrar sesión en un cliente consiste en descartar el token, que permanece válido hasta expirar salvo desactivación de cuenta o rotación global de clave. El campo `active` representa acceso a la cuenta: el bloqueo comercial de citas es independiente y no impide iniciar sesión ni consultar compromisos existentes. Su aplicación a futuras compras queda preparada, sin implementar pedidos.
 
 ## Primer administrador
 
@@ -178,9 +178,18 @@ $env:TEST_DB_PASSWORD = $env:DB_PASSWORD
 .\mvnw.cmd -Ppostgres-tests clean verify
 ```
 
-El perfil ejecuta **15 pruebas unitarias y 79 de integración** (16 de autenticación, 18 de catálogo, 22 de reservas y 23 de operación de agenda). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
+El perfil ejecuta **15 pruebas unitarias y 88 de integración** (16 de autenticación, 18 de catálogo, 22 de reservas y 32 de operación de agenda e incidencias). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
 
 La integración comprueba registro, normalización y restricciones PostgreSQL, duplicados concurrentes, rechazo de asignación de privilegios, login válido/inválido, JWT válido/ausente/expirado/manipulado, cuentas inactivas, varios roles y cambios de permisos actuales, errores JSON e inicialización administrativa sin elevar cuentas existentes.
+
+## Incidencias de citas — verificación del 17 de octubre de 2026
+
+- Java 25.0.1 y Maven Wrapper: `-Ppostgres-tests clean verify`, **BUILD SUCCESS**; compilación, empaquetado, 15 pruebas unitarias y 88 de integración sin fallos. V5 migró y Hibernate validó el esquema en PostgreSQL 18.1, exclusivamente en `barberia_auth_test`. Se usó `TEMP/TMP` local corto para las pruebas HTTP en Windows; no se cambió el entorno global.
+- La suite cubre advertencia en la segunda incidencia, bloqueo en la tercera, reinicio por COMPLETED, personal e invitados sin penalización, login y consultas tras bloquear, cancelación existente, reactivación solo ADMIN con motivo e historial, transiciones repetidas y dos citas concurrentes del mismo cliente. Comprueba COMPLETED solo desde el fin, NO_SHOW al fin y exactamente 15 minutos después, rechazo al segundo siguiente, cita IN_PROGRESS y lunes sin resultado → martes COMPLETED → intento tardío el miércoles sin penalización. Se repitieron las regresiones de horarios, permisos y ocupaciones.
+- En la carrera reserva/presencial PostgreSQL puede devolver SQLSTATE 40P01 al escoger una víctima entre inserciones especulativas de ocupaciones. Esa escritura ahora lo traduce a 409, junto con 23P01 y 23505. Las carreras de la suite dan 201/409. No se ejecutó un arranque manual nuevo de la aplicación ni se migró `barberia_db`.
+- `GET /api/v1/users/me/booking-status` expone solo estado y contador propios; `POST /api/v1/admin/clients/{id}/reactivate` exige ADMIN y motivo. La cancelación propia devuelve `bookingStatus` con la advertencia cuando corresponda. Detalles y ejemplos en [docs/citas.md](docs/citas.md#incidencias-consecutivas-y-bloqueo-comercial).
+
+Incidencias de pedidos, pagos, reembolsos, inventario y ventas siguen pendientes.
 
 ## Verificación de operación de agenda — 17 de octubre de 2026
 

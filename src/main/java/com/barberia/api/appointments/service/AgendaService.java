@@ -2,6 +2,7 @@ package com.barberia.api.appointments.service;
 
 import com.barberia.api.accounts.entity.Role;
 import com.barberia.api.accounts.repository.AccountRepository;
+import com.barberia.api.accounts.service.ClientIncidentService;
 import com.barberia.api.appointments.dto.*;
 import com.barberia.api.appointments.entity.*;
 import com.barberia.api.appointments.repository.*;
@@ -23,15 +24,16 @@ public class AgendaService {
     private final AppointmentRepository appointments;
     private final BlockRepository blocks;
     private final AccountRepository accounts;
+    private final ClientIncidentService incidents;
     private final BarberRepository barbers;
     private final BookingResources resources;
     private final AgendaAvailability availability;
     private final SlotRules rules;
     private final Clock clock;
     public AgendaService(AppointmentRepository appointments, BlockRepository blocks, AccountRepository accounts,
-            BarberRepository barbers, BookingResources resources, AgendaAvailability availability, SlotRules rules, Clock clock) {
+            ClientIncidentService incidents, BarberRepository barbers, BookingResources resources, AgendaAvailability availability, SlotRules rules, Clock clock) {
         this.appointments=appointments; this.blocks=blocks; this.accounts=accounts; this.barbers=barbers;
-        this.resources=resources; this.availability=availability; this.rules=rules; this.clock=clock;
+        this.incidents=incidents; this.resources=resources; this.availability=availability; this.rules=rules; this.clock=clock;
     }
     private boolean isAdmin(UUID actor) {
         var account=accounts.findById(actor).filter(a->a.isActive())
@@ -52,7 +54,11 @@ public class AgendaService {
             var account=accounts.findById(a.getClientId()).orElseThrow(NotFoundException::new);
             customer=new StaffAppointmentResponse.Customer(account.getName(),account.getPhone(),false);
         }
-        return new StaffAppointmentResponse(AppointmentResponse.from(a),customer,a.getCreatedBy(),a.getCancelledBy());
+        Instant now=clock.instant();
+        boolean review=(a.getStatus().equals("CONFIRMED")
+                && now.isAfter(a.getEndsAt().plus(15,ChronoUnit.MINUTES)))
+                || (a.getStatus().equals("IN_PROGRESS") && now.isAfter(a.getEndsAt()));
+        return new StaffAppointmentResponse(AppointmentResponse.from(a),customer,a.getCreatedBy(),a.getCancelledBy(),review);
     }
     @Transactional
     @PreAuthorize("hasAnyRole('BARBER','ADMIN')")
@@ -97,15 +103,23 @@ public class AgendaService {
                 if(now.isBefore(a.getStartsAt())) throw new BusinessConflictException("La cita todavía no comienza.");
                 a.begin(now);
             }
-            case COMPLETED -> { requireState(a,"IN_PROGRESS"); a.complete(now); }
+            case COMPLETED -> {
+                requireState(a,"IN_PROGRESS");
+                if(now.isBefore(a.getEndsAt())) throw new BusinessConflictException("El intervalo todavía no finaliza.");
+                a.complete(now);
+            }
             case NO_SHOW -> {
                 requireState(a,"CONFIRMED");
                 if(now.isBefore(a.getEndsAt())) throw new BusinessConflictException("El intervalo todavía no finaliza.");
+                if(now.isAfter(a.getEndsAt().plus(15,ChronoUnit.MINUTES)))
+                    throw new BusinessConflictException("Terminó la ventana de 15 minutos para marcar la inasistencia.");
                 a.noShow(now);
             }
             default -> throw new IllegalArgumentException();
         }
         AgendaConflicts.flush(appointments::flush);
+        if(target==AppointmentStatus.COMPLETED || target==AppointmentStatus.NO_SHOW)
+            incidents.record(a.getClientId(),a.getId(),actor,target.name());
         return response(a);
     }
     @Transactional
@@ -113,14 +127,14 @@ public class AgendaService {
     public AppointmentResponse cancelOwn(UUID actor, UUID id, CancelRequest request) {
         var a=appointments.findForUpdate(id).orElseThrow(NotFoundException::new);
         if(!actor.equals(a.getClientId())) throw new NotFoundException();
-        if(a.getStatus().equals("CANCELLED")) return AppointmentResponse.from(a);
+        if(a.getStatus().equals("CANCELLED")) return AppointmentResponse.from(a,incidents.ownStatus(actor));
         requireState(a,"CONFIRMED");
         Instant now=clock.instant();
         if(now.plusSeconds(3600).isAfter(a.getStartsAt()))
             throw new BusinessConflictException("La cancelación requiere al menos 60 minutos de anticipación.");
         a.cancel(actor,now,request.reason(),"CLIENT");
         AgendaConflicts.flush(appointments::flush);
-        return AppointmentResponse.from(a);
+        return AppointmentResponse.from(a,incidents.record(a.getClientId(),a.getId(),actor,"CLIENT_CANCELLED"));
     }
     @Transactional
     @PreAuthorize("hasAnyRole('BARBER','ADMIN')")
