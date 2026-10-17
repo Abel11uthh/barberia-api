@@ -8,6 +8,9 @@ import org.springframework.data.domain.*;
 import org.springframework.data.jpa.repository.*;
 
 public interface ServiceRepository extends JpaRepository<CatalogService, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("select s from CatalogService s where s.id = :id")
+    Optional<CatalogService> findForBooking(UUID id);
     Page<CatalogService> findByActiveTrue(Pageable pageable);
     Optional<CatalogService> findByIdAndActiveTrue(UUID id);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
