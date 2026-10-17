@@ -49,4 +49,5 @@ public class Account {
     public String getPasswordHash() { return passwordHash; }
     public boolean isActive() { return active; }
     public Set<Role> getRoles() { return Set.copyOf(roles); }
+    public void addBarberRole() { roles.add(Role.BARBER); }
 }
