@@ -238,8 +238,8 @@ class AppointmentPostgresIT {
     @Test void databaseRejectsDuplicateAndNonGridSlots() throws Exception {
         var saved = book(payload("09:00"), clientToken, 201);
         UUID id = UUID.fromString(saved.get("id").asText());
-        String copy = "insert into appointments(id,client_id,barber_id,branch_id,starts_at,ends_at,status,total,created_at) "
-                + "select ?,client_id,barber_id,branch_id,starts_at,ends_at,status,total,created_at from appointments where id=?";
+        String copy = "insert into appointments(id,client_id,barber_id,branch_id,starts_at,ends_at,status,total,created_at,origin,created_by) "
+                + "select ?,client_id,barber_id,branch_id,starts_at,ends_at,status,total,created_at,origin,created_by from appointments where id=?";
         assertThatThrownBy(() -> jdbc.update(copy, UUID.randomUUID(), id)).isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("update appointments set ends_at=ends_at+interval '1 minute' where id=?", id))
                 .isInstanceOf(DataIntegrityViolationException.class);

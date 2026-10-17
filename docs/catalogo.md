@@ -1,6 +1,6 @@
 # Sucursales, servicios y barberos
 
-La entrega del catálogo incorporó los módulos `branches`, `services` y `barbers`. Conserva Java 25, Spring Boot 3.5.16, el login JWT y las convenciones de errores existentes. La entrega posterior de [citas](citas.md) añade disponibilidad por hora y reservas propias reutilizando este catálogo. Bloqueos individuales, inventario, ventas y pagos siguen pendientes.
+La entrega del catálogo incorporó los módulos `branches`, `services` y `barbers`. Conserva Java 25, Spring Boot 3.5.16, el login JWT y las convenciones de errores existentes. Las entregas posteriores de [citas](citas.md) añaden reservas y operación de agenda, incluida atención inmediata y bloqueos individuales. Inventario, ventas y pagos siguen pendientes.
 
 ## Permisos y endpoints
 
@@ -73,7 +73,7 @@ Ejemplo de cuerpo para POST/PUT:
 {"name":"Servicio de ejemplo","description":null,"price":100.00,"type":"HAIRCUT"}
 ```
 
-No hay duración por servicio: las citas comienzan a horas exactas y ocupan una hora completa.
+No hay duración por servicio: todas las citas ocupan una hora completa. Las reservas comienzan a horas exactas; la atención inmediata comienza al minuto del reloj del servidor.
 
 ## Cuentas y perfiles de barbero
 
