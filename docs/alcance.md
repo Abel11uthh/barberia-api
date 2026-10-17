@@ -2,9 +2,9 @@
 
 ## Fuente de requisitos
 
-La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS, cuentas/autenticación JWT y los adjuntos posteriores de catálogo/perfiles, reserva de citas y operación de agenda con atención inmediata y protección de intervalos solapados.
+La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS, cuentas/autenticación JWT y los adjuntos posteriores de catálogo/perfiles, reserva de citas, operación de agenda e incidencias consecutivas de citas.
 
-Esta entrega añade atención inmediata de invitados, agenda del personal, estados, cancelaciones y bloqueos individuales, con protección PostgreSQL de intervalos solapados. Contadores, advertencias y bloqueos comerciales quedan pendientes. Las demás decisiones abiertas se conservan; Mercado Pago está elegido, con integración pendiente.
+Esta entrega añade incidencias consecutivas de citas, advertencias JSON, bloqueo de nuevas reservas y reactivación administrativa sobre la agenda ya implementada. Incidencias de pedidos, pagos y reembolsos siguen pendientes. Las demás decisiones abiertas se conservan; Mercado Pago está elegido, con integración pendiente.
 
 ## Objetivo
 
@@ -47,19 +47,19 @@ El flujo es controller → service → repository: contrato HTTP y validación d
 
 ## Cancelaciones e incidencias
 
-Las cancelaciones de citas confirmadas, las transiciones de atención y NO_SHOW están implementadas. Las siguientes reglas de contadores, advertencias, bloqueos comerciales y reactivación se conservan como requisitos pendientes: esta entrega no incrementa ni reinicia contadores.
+Las cancelaciones de citas confirmadas, las transiciones de atención, NO_SHOW y el contador de incidencias de citas están implementados. Las reglas de pedidos y reembolsos permanecen pendientes.
 
 - Cliente: cancelación con al menos 60 minutos de anticipación, incluyendo exactamente 60 minutos.
 - Barbero sobre sus citas confirmadas y administrador sobre cualquiera confirmada: cancelación sin límite de anticipación, con motivo obligatorio y sin atribuirla al cliente. Conserva actor, fecha, motivo y origen.
-- Barbero y administrador pueden marcar inasistencias de citas confirmadas únicamente al finalizar su intervalo y sin haber iniciado atención.
+- Barbero y administrador pueden marcar inasistencias de citas confirmadas desde el fin del intervalo hasta 15 minutos después, inclusive, si no se inició la atención.
 - Cancelaciones del cliente e inasistencias cuentan como incidencias consecutivas de citas.
 - Segunda incidencia: advertencia. Tercera: bloqueo.
 - Una asistencia completada reinicia el contador de citas.
 - Los pedidos tienen un contador independiente: cancelación del cliente o vencimiento sin recogida suma; recogida completada reinicia.
 - Llegar a tres en cualquiera bloquea nuevas citas y compras.
 - El bloqueo no cancela compromisos existentes ni impide recoger pedidos pagados o recibir reembolsos.
-- Un bloqueo comercial para reservar o comprar no impide iniciar sesión ni consultar compromisos existentes. Es independiente del estado activo de la cuenta; los bloqueos comerciales todavía no están implementados.
-- El administrador puede reactivar al cliente.
+- Un bloqueo comercial para reservar o comprar no impide iniciar sesión ni consultar/cancelar compromisos existentes. Es independiente del estado activo de la cuenta. La comprobación de compras queda preparada, sin pedidos implementados.
+- El administrador puede reactivar al cliente con motivo obligatorio; reinicia el contador de citas, conserva historial y audita actor, fecha y motivo.
 - Cancelaciones causadas por el negocio no suman incidencias.
 - Las bajas de usuarios conservan su historial.
 
@@ -109,7 +109,7 @@ Las cancelaciones de citas confirmadas, las transiciones de atención y NO_SHOW 
 | Persistencia | Migración V1 para `accounts`, `roles` y `account_roles`. Flyway con limpieza deshabilitada y sin baseline automático; Hibernate `validate`. |
 | Primer administrador | Bootstrap explícito desactivado por defecto; datos mediante `BOOTSTRAP_ADMIN_*`. Crea `ADMIN` si no existe; nunca cambia la contraseña, el estado ni los privilegios de una cuenta existente. |
 | Vida de tokens | No hay refresh ni revocación individual; vigencia limitada. Desactivar una cuenta rechaza sus tokens; rotar la clave invalida todos. |
-| Separación comercial | Cuenta activa es independiente de futuros bloqueos de reservas/compras. No se implementan esos bloqueos. |
+| Separación comercial | Cuenta activa es independiente del bloqueo de nuevas reservas. El mismo control podrá aplicarse a futuras compras. |
 
 El [README](../README.md) detalla variables, ejemplos, endpoints, inicio del primer administrador y deshabilitación posterior del mecanismo. El bootstrap solo asigna `ADMIN`. La asignación administrativa de un perfil añade exclusivamente `BARBER`; no se incorpora gestión genérica de roles.
 
@@ -137,16 +137,23 @@ La primera entrega del módulo `appointments` incorporó:
 
 Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
 
-## Etapa actual: operación de agenda
+## Operación de agenda implementada
 
 - Atención inmediata WALK_IN para invitado sin cuenta ni vinculación por teléfono. Inicio tomado del Clock del servidor al minuto, estado IN_PROGRESS, creador autenticado, precios históricos y duración de una hora. Mismas reglas de horario/descanso y disponibilidad que reservas.
 - Ejemplos confirmados: 14:25–15:25 no cabe si existe reserva a las 15:00; otra atención a las 15:10 se solapa; a las 15:25 no cabe una hora si existe reserva a las 16:00. Intervalos adyacentes sí se admiten.
 - BARBER consulta y opera sus citas; ADMIN cualquiera y ambas sucursales. Agenda paginada por fecha y estado, con nombre/contacto, servicios, horario y estado. CLIENT conserva solo sus citas. Sin exposición de credenciales.
-- CONFIRMED → IN_PROGRESS solo desde startsAt; IN_PROGRESS → COMPLETED incluso antes del final; CONFIRMED → NO_SHOW solo desde endsAt y sin inicio; CONFIRMED → CANCELLED según permisos. Estados finales no se cambian. Repetir una acción ya aplicada devuelve el resultado sin duplicar efectos ni sobrescribir auditoría.
-- Cancelación CLIENT con al menos 60 minutos exactos; personal sin límite de anticipación y con motivo obligatorio. Se conservan actor, fecha, motivo y origen CLIENT/STAFF. Sin reembolsos ni penalizaciones implementadas.
+- CONFIRMED → IN_PROGRESS solo desde startsAt; IN_PROGRESS → COMPLETED desde endsAt; CONFIRMED → NO_SHOW solo desde endsAt hasta endsAt + 15 minutos inclusive y sin inicio; CONFIRMED → CANCELLED según permisos. Estados finales no se cambian. Repetir una acción ya aplicada devuelve el resultado sin duplicar efectos ni sobrescribir auditoría. Una CONFIRMED sin resultado tras la ventana queda identificada para revisión administrativa, sin penalización automática.
+- Cancelación CLIENT con al menos 60 minutos exactos; personal sin límite de anticipación y con motivo obligatorio. Se conservan actor, fecha, motivo y origen CLIENT/STAFF. La incidencia de una cancelación CLIENT se aplica en V5; los reembolsos siguen pendientes.
 - Bloqueos ADMIN con inicio anterior al fin, no pasado, motivo y auditoría; pueden empezar a minutos arbitrarios. Solapamientos se rechazan, sin desplazar ni cancelar citas. Cancelación conserva fila e historial.
-- V4 conserva V1/V2/V3, adapta reservas existentes y crea barber_blocks y agenda_occupations. Exclusión GiST por barbero y rango [inicio, fin), usando btree_gist en la base destino. Triggers mantienen fuente/ocupación atómicas; conflictos 23P01 devuelven 409. COMPLETED y NO_SHOW mantienen ocupación; CANCELLED la libera. No se modifican privilegios globales.
-- Sin contadores, advertencias, bloqueos comerciales, reprogramación, inventario, ventas ni pagos. Instalación de extensión, transiciones, rutas y ejemplos en [citas.md](citas.md).
+- V4 conserva V1/V2/V3, adapta reservas existentes y crea barber_blocks y agenda_occupations. Exclusión GiST por barbero y rango [inicio, fin), usando btree_gist en la base destino. Triggers mantienen fuente/ocupación atómicas; conflictos 23P01 y víctimas 40P01 de inserciones simultáneas devuelven 409. COMPLETED y NO_SHOW mantienen ocupación; CANCELLED la libera. No se modifican privilegios globales.
+- Instalación de extensión, transiciones, rutas y ejemplos en [citas.md](citas.md). Sin reprogramación, inventario, ventas ni pagos.
+
+## Incidencias de citas implementadas
+
+- V5 conserva V1–V4 y añade contador consecutivo por cuenta, bloqueo comercial separado de `active` e historial de eventos por cita y actor. Cancelación CLIENT y NO_SHOW suman; cancelación del personal e invitados no penalizan. COMPLETED reinicia el contador, sin levantar un bloqueo ya aplicado.
+- La segunda incidencia consecutiva produce advertencia JSON; la tercera bloquea nuevas reservas. Se mantiene login y la consulta/cancelación de citas existentes. La comprobación comercial es central para futuras compras, aún no implementadas.
+- ADMIN reactiva con motivo obligatorio, reinicia el contador y conserva historial. Se ordena por confirmación de la transición válida, no por inicio de cita. Una inasistencia marcada después de la ventana se rechaza sin alterar la racha. PostgreSQL serializa los eventos por cuenta con bloqueo de fila y secuencia; repetir una transición no duplica el evento.
+- Endpoints, respuestas y ejemplo lunes sin resultado → martes COMPLETED → intento tardío el miércoles en [citas.md](citas.md). El contador de pedidos, reembolsos, pagos, inventario y ventas siguen pendientes.
 
 ## Etapas
 
@@ -156,28 +163,31 @@ Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
 4. Reportes.
 5. Pedidos, pagos en línea, recogidas y reembolsos.
 
-Estas son las etapas indicadas en la especificación. La primera está completada y la segunda incorpora cuentas, catálogo, reservas y operación de agenda. Reprogramación, contadores de incidencias, advertencias y bloqueos comerciales siguen pendientes; documentar otros requisitos no implica haberlos implementado.
+Estas son las etapas indicadas en la especificación. La primera está completada y la segunda incorpora cuentas, catálogo, reservas, operación de agenda e incidencias de citas. Reprogramación e incidencias de pedidos siguen pendientes; documentar otros requisitos no implica haberlos implementado.
 
 ## Fuera de esta tarea
 
-- Reprogramación, contadores de incidencias, advertencias y vinculación/identificación de invitados.
-- Gestión genérica de usuarios/roles, traslados de barberos, bloqueos comerciales, recuperación de contraseña y verificación de correo.
+- Reprogramación, incidencias de pedidos y vinculación/identificación de invitados.
+- Gestión genérica de usuarios/roles, traslados de barberos, recuperación de contraseña y verificación de correo.
 - Inventario, ventas y cobros.
 - Refresh tokens y revocación individual de access tokens.
 - Pagos e integraciones de pagos.
 - Docker, infraestructura y despliegue.
 - Carpetas vacías para posibles módulos futuros.
-- Merge de feature/agenda-operations. El commit, push y apertura del PR quedaron autorizados tras esta revisión final.
+- Merge de feature/appointment-incidents.
 
 ## Decisiones pendientes
 
 Los siguientes puntos permanecen abiertos; no se adoptan valores predeterminados ni soluciones implícitas:
 
 - Control de duplicados de invitados (ya se confirmó identificación mediante nombre y teléfono, sin cuenta automática).
-- Canal de las advertencias.
 - Vencimientos de recogida fuera del horario de atención.
 - Procedimiento de reembolsos presenciales.
-- Efecto de la reactivación administrativa sobre los contadores.
+
+## Verificación de incidencias de citas — 17 de octubre de 2026
+
+- `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests clean verify`: **BUILD SUCCESS**, Java 25.0.1, 15 pruebas unitarias y 88 integraciones, sin fallos. Solo se usó `barberia_auth_test`; V1–V4 no se editaron y V5 se aplicó allí. No se hizo un arranque manual nuevo ni se migró `barberia_db`.
+- Se verificaron umbrales, advertencia JSON, bloqueo separado de login, reactivación con motivo e historial, idempotencia, actualizaciones concurrentes de distintas citas, COMPLETED desde el fin del bloque, ventana de NO_SHOW inclusive, rechazo tardío sin incidencia y regresiones de reservas y ocupaciones. Una carrera de exclusión reveló SQLSTATE 40P01; su conversión a 409 se verificó con la prueba aislada y con la suite completa.
 
 ## Verificación de operación de agenda — 17 de octubre de 2026
 

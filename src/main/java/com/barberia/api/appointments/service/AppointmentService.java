@@ -1,7 +1,7 @@
 package com.barberia.api.appointments.service;
 
 import com.barberia.api.accounts.entity.Role;
-import com.barberia.api.accounts.repository.AccountRepository;
+import com.barberia.api.accounts.service.ClientIncidentService;
 import com.barberia.api.appointments.dto.*;
 import com.barberia.api.appointments.entity.Appointment;
 import com.barberia.api.appointments.repository.AppointmentRepository;
@@ -13,7 +13,6 @@ import java.time.*;
 import java.util.*;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,15 +21,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class AppointmentService {
     private final AppointmentRepository appointments;
     private final BarberRepository barbers;
-    private final AccountRepository accounts;
+    private final ClientIncidentService incidents;
     private final BookingResources resources;
     private final AgendaAvailability availability;
     private final SlotRules rules;
     private final Clock clock;
-    public AppointmentService(AppointmentRepository appointments, BarberRepository barbers, AccountRepository accounts,
-            BookingResources resources, AgendaAvailability availability, SlotRules rules, Clock clock) {
-        this.appointments=appointments; this.barbers=barbers; this.accounts=accounts;
-        this.resources=resources; this.availability=availability; this.rules=rules; this.clock=clock;
+    public AppointmentService(AppointmentRepository appointments, BarberRepository barbers,
+            ClientIncidentService incidents, BookingResources resources, AgendaAvailability availability, SlotRules rules, Clock clock) {
+        this.appointments=appointments; this.barbers=barbers;
+        this.incidents=incidents; this.resources=resources; this.availability=availability; this.rules=rules; this.clock=clock;
     }
     public AvailabilityResponse availability(UUID branchId, UUID barberId, LocalDate date) {
         var barber=barbers.findAvailableById(barberId).orElseThrow(NotFoundException::new);
@@ -50,10 +49,9 @@ public class AppointmentService {
     public AppointmentResponse book(UUID clientId, BookingRequest request) {
         Instant start=rules.start(request.date(),request.time());
         if(start.isBefore(clock.instant())) throw new IllegalArgumentException("Fecha pasada.");
-        var barber=resources.activeBarber(request.barberId());
-        var client=accounts.findForBooking(clientId).orElseThrow(()->new BadCredentialsException("Cuenta no disponible."));
-        if(!client.isActive()) throw new BadCredentialsException("Cuenta no disponible.");
+        var client=incidents.requireCommercialAccess(clientId);
         if(!client.getRoles().contains(Role.CLIENT)) throw new AccessDeniedException("Permiso insuficiente.");
+        var barber=resources.activeBarber(request.barberId());
         var selected=resources.services(request.primaryServiceId(),request.addOnIds());
         if(freeSlots(barber.getBranch(),barber.getId(),request.date()).stream().noneMatch(s->s.startsAt().equals(start)))
             throw new BusinessConflictException("El horario no está disponible.");

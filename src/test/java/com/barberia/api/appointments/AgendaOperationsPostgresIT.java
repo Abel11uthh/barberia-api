@@ -69,10 +69,12 @@ class AgendaOperationsPostgresIT {
     @Autowired TestClock clock;
     @MockitoSpyBean AgendaAvailability availability;
     UUID client, otherClient, admin, barberAccount, otherBarberAccount, barber, otherBarber, branch, otherBranch, haircut, addon;
+    String clientPassword;
     @BeforeEach void setup() {
         assertThat(jdbc.queryForObject("select current_database()",String.class)).isEqualTo("barberia_auth_test");
         clock.now.set(at("07:00")); clock.threadTime.remove();
-        String hash=encoder.encode(UUID.randomUUID().toString());
+        clientPassword=UUID.randomUUID().toString();
+        String hash=encoder.encode(clientPassword);
         tx.executeWithoutResult(status->{
             client=accounts.save(account(hash,Role.CLIENT)).getId();
             otherClient=accounts.save(account(hash,Role.CLIENT)).getId();
@@ -225,12 +227,14 @@ class AgendaOperationsPostgresIT {
         action(id,"start",otherBarberAccount,404);
         action(id,"complete",client,403);
         clock.now.set(at("14:10"));
+        action(id,"complete",admin,409);
+        clock.now.set(at("14:25")); walk(admin,409);
+        clock.now.set(at("15:00"));
         var complete=action(id,"complete",admin,200);
         assertThat(action(id,"complete",admin,200)).isEqualTo(complete);
         action(id,"start",admin,409); action(id,"no-show",admin,409);
         cancel(id,admin,true,Map.of("reason","Motivo"),409);
         assertThat(occupied()).isEqualTo(1);
-        clock.now.set(at("14:25")); walk(admin,409);
         assertThat(complete.get("appointment").get("endsAt").asText()).isEqualTo(at("15:00").toString());
         assertThat(complete.toString()).doesNotContain("payment","paid");
     }
@@ -330,7 +334,12 @@ class AgendaOperationsPostgresIT {
     }
     private int concurrent(MockHttpServletRequestBuilder request,UUID actor,String now) throws Exception {
         clock.threadTime.set(at(now));
-        try { return perform(request,actor).getResponse().getStatus(); }
+        try {
+            var result=perform(request,actor);
+            if(result.getResponse().getStatus()>=500)
+                throw new AssertionError("Error interno en la prueba concurrente.",result.getResolvedException());
+            return result.getResponse().getStatus();
+        }
         finally { clock.threadTime.remove(); }
     }
     @Test void simultaneousWalkInsWithDifferentOverlappingStartsOnlyPersistOne() throws Exception {
@@ -358,5 +367,181 @@ class AgendaOperationsPostgresIT {
         }
         assertThat(occupied()).isZero();
         assertThat(jdbc.queryForObject("select count(*) from agenda_occupations where appointment_id=?",Integer.class,UUID.fromString(id))).isEqualTo(1);
+    }
+
+    private JsonNode bookingStatus(UUID actor, int expected) throws Exception {
+        return call(get("/api/v1/users/me/booking-status"), actor, expected);
+    }
+    private int incidentEvents(UUID accountId) {
+        return jdbc.queryForObject("select count(*) from appointment_client_events where account_id=?",Integer.class,accountId);
+    }
+    private JsonNode reactivate(UUID actor, Object request, int expected) throws Exception {
+        return call(body(post("/api/v1/admin/clients/"+client+"/reactivate"),request),actor,expected);
+    }
+
+    @Test void cancellationAndNoShowsWarnOnSecondAndBlockOnThirdWithoutLosingExistingAccess() throws Exception {
+        String first=book("14:00").get("id").asText();
+        String second=book("15:00").get("id").asText();
+        String third=book("16:00").get("id").asText();
+        String fourth=book("17:00").get("id").asText();
+        var future=reservation("14:00"); future.put("date",DATE.plusDays(1).toString());
+        String futureId=call(body(post("/api/v1/appointments"),future),client,201).get("id").asText();
+        assertThat(cancel(first,client,false,Map.of(),200).get("bookingStatus").get("consecutiveAppointmentIncidents").asInt()).isEqualTo(1);
+        assertThat(bookingStatus(client,200).get("warning").isNull()).isTrue();
+        clock.now.set(at("16:00"));
+        action(second,"no-show",barberAccount,200);
+        var warned=bookingStatus(client,200);
+        assertThat(warned.get("consecutiveAppointmentIncidents").asInt()).isEqualTo(2);
+        assertThat(warned.get("warning").asText()).contains("Advertencia");
+        clock.now.set(at("17:00"));
+        action(third,"no-show",admin,200);
+        var blocked=bookingStatus(client,200);
+        assertThat(blocked.get("consecutiveAppointmentIncidents").asInt()).isEqualTo(3);
+        assertThat(blocked.get("bookingBlocked").asBoolean()).isTrue();
+        assertThat(bookingStatus(otherClient,200).get("consecutiveAppointmentIncidents").asInt()).isZero();
+        bookingStatus(admin,403);
+        assertThat(call(body(post("/api/v1/appointments"),reservation("17:00")),client,409).get("message").asText()).contains("bloqueada");
+        call(get("/api/v1/appointments/"+fourth),client,200);
+        call(get("/api/v1/appointments"),client,200);
+        call(get("/api/v1/users/me"),client,200);
+        String email=accounts.findById(client).orElseThrow().getEmail();
+        call(body(post("/api/v1/auth/login"),Map.of("email",email,"password",clientPassword)),null,200);
+        assertThat(incidentEvents(client)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("select count(*) from appointments where client_id=?",Integer.class,client)).isEqualTo(5);
+        cancel(futureId,client,false,Map.of(),200);
+        assertThat(incidentEvents(client)).isEqualTo(4);
+    }
+
+    @Test void completedResetsCounterButDoesNotLiftAnExistingCommercialBlock() throws Exception {
+        String first=book("13:00").get("id").asText();
+        String second=book("14:00").get("id").asText();
+        String third=book("15:00").get("id").asText();
+        String completed=book("16:00").get("id").asText();
+        cancel(first,client,false,Map.of(),200);
+        assertThat(cancel(second,client,false,Map.of(),200).get("bookingStatus").get("warning").asText()).contains("Advertencia");
+        cancel(third,client,false,Map.of(),200);
+        clock.now.set(at("16:00"));
+        action(completed,"start",barberAccount,200);
+        clock.now.set(at("17:00"));
+        action(completed,"complete",barberAccount,200);
+        var state=bookingStatus(client,200);
+        assertThat(state.get("consecutiveAppointmentIncidents").asInt()).isZero();
+        assertThat(state.get("bookingBlocked").asBoolean()).isTrue();
+        assertThat(incidentEvents(client)).isEqualTo(4);
+    }
+
+    @Test void staffCancellationAndGuestCompletionDoNotCountAgainstClient() throws Exception {
+        String reservationId=book("14:00").get("id").asText();
+        cancel(reservationId,barberAccount,true,Map.of("reason","Cierre ficticio"),200);
+        clock.now.set(at("14:25"));
+        String guest=walk(admin,201).get("appointment").get("id").asText();
+        clock.now.set(at("15:25"));
+        action(guest,"complete",admin,200);
+        assertThat(bookingStatus(client,200).get("consecutiveAppointmentIncidents").asInt()).isZero();
+        assertThat(incidentEvents(client)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from appointment_client_events where appointment_id=?",Integer.class,UUID.fromString(guest))).isZero();
+    }
+
+    @Test void onlyAdminReactivatesWithReasonAndHistoryIsPreserved() throws Exception {
+        String first=book("14:00").get("id").asText();
+        String second=book("15:00").get("id").asText();
+        String third=book("16:00").get("id").asText();
+        cancel(first,client,false,Map.of(),200);
+        cancel(second,client,false,Map.of(),200);
+        cancel(third,client,false,Map.of(),200);
+        reactivate(client,Map.of("reason","Solicitud"),403);
+        jdbc.update("insert into account_roles(account_id, role) values (?, 'ADMIN')",client);
+        reactivate(client,Map.of("reason","Solicitud"),403);
+        reactivate(barberAccount,Map.of("reason","Solicitud"),403);
+        reactivate(admin,Map.of("reason"," "),400);
+        var result=reactivate(admin,Map.of("reason","Revisión ficticia"),200);
+        assertThat(result.get("bookingBlocked").asBoolean()).isFalse();
+        assertThat(result.get("consecutiveAppointmentIncidents").asInt()).isZero();
+        assertThat(incidentEvents(client)).isEqualTo(4);
+        assertThat(jdbc.queryForObject("select reason from appointment_client_events where account_id=? and kind='ADMIN_REACTIVATED'",String.class,client)).isEqualTo("Revisión ficticia");
+        assertThat(jdbc.queryForObject("select actor_id from appointment_client_events where account_id=? and kind='ADMIN_REACTIVATED'",UUID.class,client)).isEqualTo(admin);
+        reactivate(admin,Map.of("reason","Repetida"),409);
+        assertThat(incidentEvents(client)).isEqualTo(4);
+        clock.now.set(at("07:01"));
+        call(body(post("/api/v1/appointments"),reservation("17:00")),client,201);
+    }
+
+    @Test void repeatedTerminalTransitionCountsOnlyOnceAndPreservesActor() throws Exception {
+        String id=book("14:00").get("id").asText();
+        clock.now.set(at("15:00"));
+        action(id,"no-show",barberAccount,200);
+        action(id,"no-show",admin,200);
+        assertThat(bookingStatus(client,200).get("consecutiveAppointmentIncidents").asInt()).isEqualTo(1);
+        assertThat(incidentEvents(client)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select actor_id from appointment_client_events where appointment_id=?",UUID.class,UUID.fromString(id))).isEqualTo(barberAccount);
+    }
+
+    @Test void concurrentTerminalTransitionsOnDifferentAppointmentsDoNotLoseAnIncrement() throws Exception {
+        String first=book("14:00").get("id").asText();
+        String second=book("15:00").get("id").asText();
+        CountDownLatch ready=new CountDownLatch(2);
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var a=pool.submit(()->{ready.countDown(); ready.await(20,TimeUnit.SECONDS); return cancel(first,client,false,Map.of(),200);});
+            var b=pool.submit(()->{ready.countDown(); ready.await(20,TimeUnit.SECONDS); return cancel(second,client,false,Map.of(),200);});
+            a.get(30,TimeUnit.SECONDS); b.get(30,TimeUnit.SECONDS);
+        }
+        assertThat(bookingStatus(client,200).get("consecutiveAppointmentIncidents").asInt()).isEqualTo(2);
+        assertThat(incidentEvents(client)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(distinct sequence) from appointment_client_events where account_id=?",Integer.class,client)).isEqualTo(2);
+    }
+
+    @Test void noShowWindowIncludesEndAndFifteenMinutesButNotLater() throws Exception {
+        String atEnd=book("14:00").get("id").asText();
+        String atLimit=book("16:00").get("id").asText();
+        String tooLate=book("17:00").get("id").asText();
+        clock.now.set(at("14:59:59")); action(atEnd,"no-show",admin,409);
+        clock.now.set(at("15:00")); action(atEnd,"no-show",admin,200);
+        clock.now.set(at("17:15")); action(atLimit,"no-show",barberAccount,200);
+        clock.now.set(at("18:15"));
+        assertThat(call(get("/api/v1/staff/appointments/"+tooLate),admin,200)
+                .get("requiresAdministrativeReview").asBoolean()).isFalse();
+        clock.now.set(at("18:15:01"));
+        assertThat(action(tooLate,"no-show",admin,409).get("message").asText()).contains("ventana de 15 minutos");
+        assertThat(action(atEnd,"no-show",admin,200).get("appointment").get("status").asText()).isEqualTo("NO_SHOW");
+        var unresolved=call(get("/api/v1/staff/appointments/"+tooLate),admin,200);
+        assertThat(unresolved.get("appointment").get("status").asText()).isEqualTo("CONFIRMED");
+        assertThat(unresolved.get("requiresAdministrativeReview").asBoolean()).isTrue();
+        assertThat(bookingStatus(client,200).get("consecutiveAppointmentIncidents").asInt()).isEqualTo(2);
+        assertThat(incidentEvents(client)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select active from agenda_occupations where appointment_id=?",Boolean.class,UUID.fromString(tooLate))).isTrue();
+    }
+
+    @Test void startedAppointmentCannotBecomeNoShow() throws Exception {
+        String id=book("14:00").get("id").asText();
+        clock.now.set(at("14:00")); action(id,"start",barberAccount,200);
+        clock.now.set(at("15:00")); action(id,"no-show",admin,409);
+        clock.now.set(at("15:01"));
+        assertThat(call(get("/api/v1/staff/appointments/"+id),admin,200)
+                .get("requiresAdministrativeReview").asBoolean()).isTrue();
+        action(id,"complete",barberAccount,200);
+        assertThat(bookingStatus(client,200).get("consecutiveAppointmentIncidents").asInt()).isZero();
+        assertThat(incidentEvents(client)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select kind from appointment_client_events where appointment_id=?",String.class,UUID.fromString(id))).isEqualTo("COMPLETED");
+    }
+
+    @Test void mondayUnrecordedTuesdayCompletedWednesdayLateNoShowDoesNotPenalize() throws Exception {
+        String monday=book("14:00").get("id").asText();
+        var tuesdayRequest=reservation("14:00"); tuesdayRequest.put("date",DATE.plusDays(1).toString());
+        String tuesday=call(body(post("/api/v1/appointments"),tuesdayRequest),client,201).get("id").asText();
+        clock.now.set(DATE.plusDays(1).atTime(14,0).atZone(ZoneId.of("America/Mexico_City")).toInstant());
+        action(tuesday,"start",barberAccount,200);
+        clock.now.set(DATE.plusDays(1).atTime(15,0).atZone(ZoneId.of("America/Mexico_City")).toInstant());
+        action(tuesday,"complete",barberAccount,200);
+        clock.now.set(DATE.plusDays(2).atTime(15,0).atZone(ZoneId.of("America/Mexico_City")).toInstant());
+        action(monday,"no-show",admin,409);
+        var unresolved=call(get("/api/v1/staff/appointments/"+monday),admin,200);
+        assertThat(unresolved.get("appointment").get("status").asText()).isEqualTo("CONFIRMED");
+        assertThat(unresolved.get("requiresAdministrativeReview").asBoolean()).isTrue();
+        assertThat(bookingStatus(client,200).get("consecutiveAppointmentIncidents").asInt()).isZero();
+        assertThat(jdbc.queryForList("select kind from appointment_client_events where account_id=? order by sequence",String.class,client))
+                .containsExactly("COMPLETED");
+        var mondayAgenda=call(get("/api/v1/staff/appointments").param("date",DATE.toString())
+                .param("status","CONFIRMED"),admin,200);
+        assertThat(mondayAgenda.get("items").findValuesAsText("requiresAdministrativeReview")).contains("true");
     }
 }

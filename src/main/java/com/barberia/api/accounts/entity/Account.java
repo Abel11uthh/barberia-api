@@ -21,6 +21,12 @@ public class Account {
     private String passwordHash;
     @Column(nullable = false)
     private boolean active;
+    @Column(nullable = false)
+    private int appointmentIncidentCount;
+    @Column(nullable = false)
+    private boolean commercialBlocked;
+    @Column(nullable = false)
+    private long appointmentEventSequence;
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
     @ElementCollection
@@ -48,6 +54,15 @@ public class Account {
     public String getEmail() { return email; }
     public String getPasswordHash() { return passwordHash; }
     public boolean isActive() { return active; }
+    public int getAppointmentIncidentCount() { return appointmentIncidentCount; }
+    public boolean isCommercialBlocked() { return commercialBlocked; }
+    public long nextAppointmentEventSequence() { return ++appointmentEventSequence; }
+    public void addAppointmentIncident() {
+        appointmentIncidentCount++;
+        if (appointmentIncidentCount >= 3) commercialBlocked = true;
+    }
+    public void resetAppointmentIncidents() { appointmentIncidentCount = 0; }
+    public void reactivateCommercialAccess() { appointmentIncidentCount = 0; commercialBlocked = false; }
     public Set<Role> getRoles() { return Set.copyOf(roles); }
     public void addBarberRole() { roles.add(Role.BARBER); }
 }

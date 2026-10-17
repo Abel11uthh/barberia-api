@@ -5,7 +5,7 @@
 - Consultar `docs/alcance.md` y la especificación original cuando esté disponible. No inventar requisitos ni módulos para suplir un documento faltante.
 - Mantener un monolito organizado por módulos de negocio bajo `com.barberia.api`. Crear cada módulo solo cuando se implemente una necesidad confirmada.
 - Respetar controller → service → repository: HTTP y validación de entrada, reglas y transacciones, acceso a datos, respectivamente. No acceder a repositorios desde controllers.
-- El alcance implementado incluye la base, cuentas/JWT, sucursales, servicios, perfiles, reservas propias y operación de agenda: atención inmediata de invitados, agenda del personal, estados, cancelaciones y bloqueos individuales. No agregar contadores de incidencias, advertencias, bloqueos comerciales, vinculación automática de invitados, reprogramación, inventario, ventas, pagos, Docker ni despliegue sin una tarea posterior que los solicite.
+- El alcance implementado incluye la base, cuentas/JWT, catálogo, reservas, operación de agenda e incidencias consecutivas de citas con advertencia, bloqueo comercial y reactivación administrativa. No agregar incidencias de pedidos, vinculación automática de invitados, reprogramación, inventario, ventas, pagos, reembolsos, Docker ni despliegue sin una tarea posterior que los solicite.
 - No añadir carpetas vacías o clases de ejemplo para módulos futuros.
 - Mantener Java 25 LTS sin características preview y usar Maven Wrapper para verificar los cambios.
 - Nunca incluir secretos, credenciales reales, tokens ni datos sensibles en código, documentación, pruebas, salidas o commits. Usar variables de entorno y ejemplos ficticios.
