@@ -1,131 +1,203 @@
 # barberia-api
 
-API REST para una barbería con dos sucursales, orientada a reducir esperas mediante citas y registrar servicios, ventas de productos e ingresos. No incluye frontend. El alcance contempla clientes, barberos y administradores; agendas, cancelaciones e incidencias; inventario por sucursal; cobros presenciales; reportes; y, en una etapa posterior, pedidos con pagos en línea, recogida y reembolsos.
+API REST para una barbería con dos sucursales, sin frontend. La primera funcionalidad implementada es **cuentas y autenticación JWT**: registro de clientes, inicio de sesión y consulta de la cuenta autenticada. Citas, invitados, sucursales, perfiles de barbero, bloqueos comerciales, ventas y pagos siguen pendientes; ver [docs/alcance.md](docs/alcance.md).
 
-El proyecto permanece en la etapa de base técnica y documentación: todavía no hay endpoints, entidades ni funcionalidades de negocio. La especificación proporcionada por el usuario, las cinco etapas de desarrollo y las siete decisiones pendientes están recogidas en [docs/alcance.md](docs/alcance.md). La seguridad JWT y las pruebas se incorporarán en sus etapas; los puntos pendientes no se consideran resueltos.
+## Tecnologías y decisiones
 
-## Tecnologías
-
-| Componente | Versión o dependencia |
+| Componente | Versión o elección |
 | --- | --- |
-| Java | 25 LTS, sin características preview |
+| Java | 25 LTS, sin preview |
 | Spring Boot | 3.5.16 |
-| Maven | 3.9.11, mediante Maven Wrapper |
-| Maven Wrapper | 3.3.4, modalidad `only-script` |
-| HTTP | Spring Web / Spring MVC |
-| Persistencia | Spring Data JPA y driver PostgreSQL |
-| Validación | Bean Validation con `spring-boot-starter-validation` |
-| Pruebas | `spring-boot-starter-test`: JUnit Jupiter, AssertJ, Mockito y Spring Test |
+| Maven / Wrapper | 3.9.11 / 3.3.4 (`only-script`) |
+| HTTP y validación | Spring Web / Bean Validation |
+| Persistencia | Spring Data JPA y PostgreSQL; comprobado con PostgreSQL 18.1 |
+| Migraciones | Flyway 11.20.3, con `flyway-database-postgresql` |
+| Seguridad | Spring Security 6.5.11, OAuth2 Resource Server y Nimbus JOSE + JWT 9.37.4 |
+| Contraseñas | BCrypt, coste 12 |
+| Pruebas | JUnit Jupiter, AssertJ, Spring Test/MockMvc y PostgreSQL real |
 
-Spring Boot administra las versiones de sus dependencias. La [documentación oficial de compatibilidad](https://docs.spring.io/spring-boot/3.5/system-requirements.html) incluye Java 25. El [Maven Wrapper oficial](https://maven.apache.org/tools/wrapper/) descarga la versión fijada de Maven sin requerir una instalación global. No se incluye Spring Security en esta etapa.
+Se eligió Nimbus mediante el [soporte JWT de Spring Security](https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html): biblioteca mantenida, integración oficial para emisión y validación, y versiones compatibles administradas por Spring Boot. No se implementa un filtro criptográfico propio ni se necesita un proveedor OAuth externo. Spring Boot administra las dependencias excepto Flyway, fijado en 11.20.3 para el [soporte de PostgreSQL 18](https://documentation.red-gate.com/fd/postgresql-database-277579325.html); el 11.7.2 administrado originalmente advertía que solo se había probado hasta PostgreSQL 17.
 
-## Requisitos
+## Requisitos y compilación
 
-- JDK 25 LTS; configurar `JAVA_HOME` hacia la carpeta del JDK y añadir su directorio `bin` al `PATH`. No habilitar características preview.
-- Acceso a Maven Central durante la primera construcción para descargar Maven y las dependencias.
-- Para arrancar: PostgreSQL accesible, la base dedicada `barberia_db` ya creada y un usuario con acceso. La aplicación no crea la base ni sus tablas. La comprobación local se realizó con PostgreSQL 18.1.
-- PowerShell en Windows o un shell compatible con POSIX en Linux/macOS.
+Se necesitan JDK 25, acceso a Maven Central en la primera construcción y, para arrancar o ejecutar integración, PostgreSQL accesible con una base dedicada y permisos para aplicar migraciones. La aplicación no crea bases de datos.
 
-## Compilación
-
-Desde la raíz del proyecto, en PowerShell, seleccionar el JDK 25 para la sesión. La ruta siguiente corresponde al Temurin 25.0.1 instalado en el equipo de verificación; adaptarla si la instalación es distinta. No es necesario desinstalar el JDK 21:
+Seleccionar el JDK para la terminal sin desinstalar Java 21. Adaptar la ruta a la instalación local:
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-25.0.1.8-hotspot'
 $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-java -version
 .\mvnw.cmd -version
 .\mvnw.cmd clean verify
 ```
 
-La salida de Maven debe indicar `Java version: 25...`. En el IDE, seleccionar JDK 25 como SDK del proyecto y como JDK de Maven (importación y ejecución); usar el nivel de lenguaje 25 sin preview y recargar el proyecto Maven. Estos ajustes del IDE son locales y no se incluyen en el repositorio.
+Maven debe indicar Java 25. En el IDE, seleccionar JDK 25 como SDK del proyecto y como JDK para importar/ejecutar Maven; nivel de lenguaje 25 sin preview. Estos ajustes son locales. En Linux/macOS, configurar `JAVA_HOME` y ejecutar `sh ./mvnw clean verify`.
 
-En Linux/macOS, configurar primero `JAVA_HOME` con la ruta local del JDK 25:
+El comando anterior compila, empaqueta y ejecuta **8 pruebas unitarias**, sin necesitar PostgreSQL. Las pruebas de integración requieren el perfil descrito más adelante. El JAR queda en `target/barberia-api-0.0.1-SNAPSHOT.jar`.
 
-```bash
-export PATH="$JAVA_HOME/bin:$PATH"
-java -version
-sh ./mvnw -version
-sh ./mvnw clean verify
-```
+## Variables y ejecución
 
-La compilación no requiere PostgreSQL. Actualmente no hay pruebas automatizadas; `verify` compila y empaqueta el proyecto y ejecutará las pruebas que se añadan en tareas posteriores. El JAR ejecutable queda en `target/barberia-api-0.0.1-SNAPSHOT.jar`.
-
-## Conexión a PostgreSQL y ejecución
-
-Las siguientes variables son obligatorias para arrancar y no tienen credenciales predeterminadas:
+Proporcionar estas variables al proceso que arranca la aplicación; no tienen credenciales ni claves predeterminadas:
 
 | Variable | Contenido |
 | --- | --- |
 | `DB_URL` | URL JDBC, por ejemplo `jdbc:postgresql://localhost:5432/barberia_db` |
 | `DB_USERNAME` | Usuario autorizado en esa base |
-| `DB_PASSWORD` | Contraseña del usuario |
+| `DB_PASSWORD` | Contraseña PostgreSQL |
+| `JWT_SECRET_BASE64` | Clave aleatoria de al menos 32 bytes, codificada en Base64 |
+| `JWT_EXPIRATION_SECONDS` | Duración obligatoria entre 60 y 3600 segundos; se recomienda 900 |
+| `SERVER_PORT` | Opcional; 8080 por defecto |
 
-Establecerlas en la misma terminal desde la que se ejecute la aplicación. Ejemplo en PowerShell; la URL es ilustrativa y se debe adaptar:
+Reutilizar las variables existentes. No imprimirlas. Para completar las que falten en PowerShell:
 
 ```powershell
-$env:DB_URL = 'jdbc:postgresql://localhost:5432/barberia_db'
-$env:DB_USERNAME = Read-Host 'Usuario PostgreSQL'
-if ([string]::IsNullOrEmpty($env:DB_PASSWORD)) {
+if (!$env:DB_URL) { $env:DB_URL = 'jdbc:postgresql://localhost:5432/barberia_db' }
+if (!$env:DB_USERNAME) { $env:DB_USERNAME = Read-Host 'Usuario PostgreSQL' }
+if (!$env:DB_PASSWORD) {
     $dbSecret = Read-Host 'Contraseña PostgreSQL' -AsSecureString
-    $env:DB_PASSWORD = [System.Net.NetworkCredential]::new('', $dbSecret).Password
+    $env:DB_PASSWORD = [Net.NetworkCredential]::new('', $dbSecret).Password
     Remove-Variable dbSecret
 }
+# Desarrollo local: generar una clave solo si todavía no se proporcionó una.
+if (!$env:JWT_SECRET_BASE64) {
+    $keyBytes = New-Object byte[] 32
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($keyBytes)
+    $env:JWT_SECRET_BASE64 = [Convert]::ToBase64String($keyBytes)
+    $rng.Dispose()
+    Remove-Variable keyBytes, rng
+}
+$env:JWT_EXPIRATION_SECONDS = '900'
 .\mvnw.cmd spring-boot:run
 ```
 
-Ejemplo en Bash:
+El ejemplo no imprime ni guarda secretos. En un entorno persistente, suministrar la misma clave mediante la configuración protegida del entorno; cambiarla invalida todos los tokens anteriores. No regenerarla en cada arranque de ese entorno. Spring Boot no carga `.env` automáticamente. También se pueden configurar las variables en la ejecución local del IDE, sin versionarlas. Tras compilar, es posible usar `java -jar target/barberia-api-0.0.1-SNAPSHOT.jar` con el mismo entorno. Detener con `Ctrl+C`.
 
-```bash
-export DB_URL='jdbc:postgresql://localhost:5432/barberia_db'
-read -r -p 'Usuario PostgreSQL: ' DB_USERNAME
-read -r -s -p 'Contraseña PostgreSQL: ' DB_PASSWORD
-printf '\n'
-export DB_USERNAME DB_PASSWORD
-sh ./mvnw spring-boot:run
+Flyway aplica `V1__create_accounts_and_roles.sql`: cuentas, catálogo de roles, relación de varios roles y restricciones de correo único y normalizado. Después, Hibernate comprueba las entidades con `ddl-auto=validate`. La inicialización SQL está desactivada, `clean-disabled=true` y `baseline-on-migrate=false`. No se borran esquemas ni se adopta automáticamente un esquema previo sin historial de migraciones; si Flyway detecta ese caso, revisar la base antes de continuar. No usar `ddl-auto=update` ni editar una migración ya aplicada: añadir una nueva versión.
+
+## Contrato HTTP
+
+Todos los cuerpos usan JSON. Los campos desconocidos se rechazan con 400, incluyendo `roles`, `active` o `id` en el registro.
+
+| Método y ruta | Entrada | Resultado |
+| --- | --- | --- |
+| `POST /api/v1/auth/register` | `name`, `phone`, `email`, `password` | 201: `id`, `name`, `phone`, `email`, `roles` (solo `CLIENT`) |
+| `POST /api/v1/auth/login` | `email`, `password` | 200: `accessToken`, `tokenType` (`Bearer`), `expiresIn` (segundos), `expiresAt` (UTC) |
+| `GET /api/v1/users/me` | Cabecera `Authorization: Bearer <accessToken>` | 200: datos públicos y roles actuales de la cuenta |
+
+Nombre: 1–120 caracteres; teléfono: 1–32; correo válido: hasta 254. Se eliminan espacios exteriores de nombre, teléfono y correo; el correo se convierte a minúsculas antes de consultar o almacenar. PostgreSQL también impide correos duplicados y valores sin normalizar, incluso ante registros concurrentes. La contraseña requiere al menos 12 caracteres y como máximo 72 bytes UTF-8, límite de BCrypt; no se recorta ni se normaliza. La API nunca devuelve contraseñas ni hashes.
+
+Ejemplo PowerShell con datos ficticios y contraseña introducida de forma oculta; ejecutarlo una vez para registrar ese correo:
+
+```powershell
+$baseUrl = 'http://localhost:8080'
+$userSecret = Read-Host 'Contraseña de la nueva cuenta (mínimo 12 caracteres)' -AsSecureString
+$userPassword = [Net.NetworkCredential]::new('', $userSecret).Password
+$registration = @{
+    name = 'Cliente de ejemplo'; phone = '5550100000'
+    email = 'cliente@example.test'; password = $userPassword
+} | ConvertTo-Json
+$account = Invoke-RestMethod "$baseUrl/api/v1/auth/register" -Method Post -ContentType 'application/json' -Body $registration
+$login = @{email='cliente@example.test'; password=$userPassword} | ConvertTo-Json
+$session = Invoke-RestMethod "$baseUrl/api/v1/auth/login" -Method Post -ContentType 'application/json' -Body $login
+$headers = @{Authorization="Bearer $($session.accessToken)"}
+$me = Invoke-RestMethod "$baseUrl/api/v1/users/me" -Headers $headers
+$me # Solo datos públicos de esta cuenta; no imprimir $session ni $headers.
+Remove-Variable userSecret, userPassword, registration, login, session, headers
 ```
 
-También se pueden proporcionar estas variables en la configuración de ejecución local del IDE. Spring Boot no carga archivos `.env` automáticamente. No guardar credenciales en archivos versionados.
+Flujo: **registro → login → JWT → endpoint protegido**. Registrar crea una cuenta activa con `CLIENT`; iniciar sesión verifica BCrypt y el estado de la cuenta. El JWT contiene la identidad UUID y tiempos de emisión/expiración. Cada petición protegida valida firma HS256, expiración, emisor y audiencia, y consulta la cuenta en PostgreSQL para obtener su estado y roles actuales. Los permisos no se aceptan del cliente ni de claims de roles del token. Una cuenta desactivada queda rechazada incluso con un JWT aún vigente.
 
-Si las tres variables ya están definidas en el proceso que ejecuta Maven, ejecutar directamente `spring-boot:run` para reutilizarlas. No imprimir sus valores ni incluir la contraseña en los argumentos del comando.
+La API es stateless: no crea sesión ni usa cookies de autenticación. Solo registro y login son públicos entre los endpoints implementados; otras rutas quedan denegadas. La raíz ya no es un endpoint de comprobación 404: sin autenticación responde 401. Usar HTTPS al exponer la API. No registrar cuerpos de login/registro ni cabeceras Bearer en clientes o intermediarios.
 
-Después de compilar, con las mismas variables disponibles, se puede ejecutar:
+Los errores usan el mismo formato, sin revelar datos internos:
 
-```text
-java -jar target/barberia-api-0.0.1-SNAPSHOT.jar
+```json
+{"timestamp":"2026-10-17T00:00:00Z","status":401,"code":"UNAUTHORIZED","message":"Credenciales inválidas."}
 ```
 
-El puerto HTTP predeterminado es `8080`; se puede cambiar con `SERVER_PORT`. El mensaje `Started BarberiaApiApplication` confirma que el proceso ha arrancado. No hay endpoints propios: una respuesta 404 en `/` es esperable. Detener con `Ctrl+C`.
+| Estado | Caso |
+| --- | --- |
+| 400 | Datos inválidos, JSON incorrecto o campos no permitidos |
+| 401 | Login incorrecto o cuenta inactiva (mismo mensaje genérico); JWT ausente, inválido, expirado o cuenta ya desactivada en una ruta protegida |
+| 403 | Cuenta autenticada intentando una ruta no permitida |
+| 409 | Correo ya registrado, también ante solicitudes simultáneas |
 
-La configuración utiliza `spring.jpa.hibernate.ddl-auto=none`, desactiva la inicialización SQL y desactiva Open Session in View. Las migraciones se incorporarán junto con el primer esquema. Sin PostgreSQL accesible y las variables requeridas no se espera un arranque correcto.
+No hay refresh tokens ni revocación individual de tokens en esta versión. Su vigencia está limitada por `JWT_EXPIRATION_SECONDS`; cerrar sesión en un cliente consiste en descartar el token, que permanece válido hasta expirar salvo desactivación de cuenta o rotación global de clave. El campo `active` representa acceso a la cuenta: los futuros bloqueos para reservar/comprar se modelarán aparte y no impedirán iniciar sesión ni consultar compromisos existentes.
 
-## Verificaciones realizadas
+## Primer administrador
 
-Estas verificaciones se realizaron durante la preparación de la base y su comprobación local, antes del primer commit:
+El mecanismo está **desactivado por defecto**. Para una inicialización explícita, proporcionar además:
+
+| Variable | Uso |
+| --- | --- |
+| `BOOTSTRAP_ADMIN_ENABLED` | `true` para habilitar la inicialización en ese arranque |
+| `BOOTSTRAP_ADMIN_NAME` | Nombre válido |
+| `BOOTSTRAP_ADMIN_PHONE` | Teléfono válido |
+| `BOOTSTRAP_ADMIN_EMAIL` | Correo válido, normalizado como en el registro |
+| `BOOTSTRAP_ADMIN_PASSWORD` | Contraseña que cumpla las mismas reglas del registro |
+
+Con las variables de conexión y JWT ya configuradas:
+
+```powershell
+$env:BOOTSTRAP_ADMIN_ENABLED = 'true'
+$env:BOOTSTRAP_ADMIN_NAME = Read-Host 'Nombre del administrador'
+$env:BOOTSTRAP_ADMIN_PHONE = Read-Host 'Teléfono'
+$env:BOOTSTRAP_ADMIN_EMAIL = Read-Host 'Correo'
+$adminSecret = Read-Host 'Contraseña del administrador' -AsSecureString
+$env:BOOTSTRAP_ADMIN_PASSWORD = [Net.NetworkCredential]::new('', $adminSecret).Password
+Remove-Variable adminSecret
+.\mvnw.cmd spring-boot:run
+```
+
+Si el correo no existe, crea una cuenta activa con `ADMIN`. Si ya existe, **no cambia contraseña, estado ni roles**, aunque sea un cliente; no sirve para recuperar cuentas ni elevar privilegios. No hay credenciales en las migraciones. Comprobar el login y el rol con `/users/me`.
+
+Tras la creación, detener la aplicación, deshabilitar el mecanismo, retirar las credenciales del entorno y reiniciar:
+
+```powershell
+$env:BOOTSTRAP_ADMIN_ENABLED = 'false'
+Remove-Item Env:BOOTSTRAP_ADMIN_NAME, Env:BOOTSTRAP_ADMIN_PHONE, Env:BOOTSTRAP_ADMIN_EMAIL, Env:BOOTSTRAP_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+.\mvnw.cmd spring-boot:run
+```
+
+Si esas variables se definieron también en la configuración persistente del IDE o del sistema, retirarlas allí. El modelo admite `ADMIN` y `BARBER` simultáneamente, pero esta entrega no añade administración de roles ni perfiles de barbero; el bootstrap crea únicamente `ADMIN`.
+
+## Pruebas con PostgreSQL
+
+Crear una base exclusiva llamada **`barberia_auth_test`** y conceder acceso al usuario de pruebas. No utilizar `barberia_db`. Definir `TEST_DB_URL`, `TEST_DB_USERNAME` y `TEST_DB_PASSWORD` para ese entorno. Ejemplo cuando se reutiliza el mismo servidor y usuario local ya configurado:
+
+```powershell
+$env:TEST_DB_URL = 'jdbc:postgresql://localhost:5432/barberia_auth_test'
+$env:TEST_DB_USERNAME = $env:DB_USERNAME
+$env:TEST_DB_PASSWORD = $env:DB_PASSWORD
+.\mvnw.cmd -Ppostgres-tests clean verify
+```
+
+El perfil ejecuta **8 pruebas unitarias y 16 de integración**. Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
+
+La integración comprueba registro, normalización y restricciones PostgreSQL, duplicados concurrentes, rechazo de asignación de privilegios, login válido/inválido, JWT válido/ausente/expirado/manipulado, cuentas inactivas, varios roles y cambios de permisos actuales, errores JSON e inicialización administrativa sin elevar cuentas existentes.
+
+## Verificación de esta entrega
 
 | Comprobación | Resultado |
 | --- | --- |
-| Maven Wrapper y Java | Maven 3.9.11 utilizando Eclipse Temurin 25.0.1. |
-| Compilación y empaquetado | `mvnw.cmd clean verify`: **BUILD SUCCESS**, con `release 25` y JAR ejecutable generado. |
-| Pruebas automatizadas | **Ninguna ejecutada**: Maven informó `No tests to run`. Las dependencias están preparadas, pero aún no hay pruebas. |
-| PostgreSQL | Conexión real confirmada a `barberia_db` en PostgreSQL 18.1, usando las variables de entorno. |
-| Arranque | `mvnw.cmd spring-boot:run`: arranque completo de Spring Boot 3.5.16 y conexiones JDBC establecidas. |
-| HTTP | Puerto efectivo **8080**, perteneciente al proceso iniciado; `GET /` respondió **404**, esperado al no haber controllers. |
-| Esquema | `ddl-auto=none` conservado; cero tablas de usuario antes y después de la comprobación. |
-| Finalización | Se detuvieron únicamente la aplicación y el árbol de procesos iniciado para verificar. |
+| Compilación y empaquetado | Java 25.0.1, Maven 3.9.11, `-Ppostgres-tests clean verify`: **BUILD SUCCESS** |
+| Pruebas unitarias | 8 ejecutadas, sin fallos |
+| Integración | 16 ejecutadas con PostgreSQL 18.1 en `barberia_auth_test`, sin fallos ni omisiones |
+| Migración y validación JPA | V1 aplicada en la base de pruebas y validada en las ejecuciones posteriores |
+| Arranque real | Dos ejecuciones con Maven Wrapper y Java 25, PostgreSQL conectado y Spring Boot iniciado; puertos asignados 63788 y 61718 |
+| Comprobación HTTP manual | Registro 201; login y perfil 200; duplicado 409; asignación de ADMIN 400; sin JWT 401; ruta no permitida 403 |
+| Bootstrap real | Creó ADMIN; segundo arranque conservó la contraseña original pese a cambiar la variable de inicialización |
+| Finalización | Detenidos únicamente los dos árboles de procesos iniciados para verificar |
+| Base de negocio | Consulta posterior de solo lectura: `barberia_db` conserva cero tablas de usuario |
+| Revisión de archivos | `git diff --check` correcto; sin coincidencias con secretos del entorno ni patrones de claves/tokens en archivos del proyecto; sin archivos locales/generados entre candidatos |
 
-El arranque local comprobado no sustituye las futuras pruebas de negocio e integración. La aplicación no se deja en ejecución tras la verificación.
+La verificación usa una caché local ignorada: `MAVEN_USER_HOME=.local/maven-home` y `-Dmaven.repo.local=.local/maven-repository`. Maven emite una advertencia de su Guice interno sobre `sun.misc.Unsafe`, y el soporte de pruebas de Mockito avisa de carga dinámica de agente en Java 25; no impiden las comprobaciones. No se añadieron opciones para ocultarlas.
+
+La comprobación histórica de la base inicial arrancó en `barberia_db` con cero tablas y `ddl-auto=none`. Esta entrega cambia a migraciones y `validate`: las verificaciones de autenticación utilizan la base exclusiva de pruebas; todavía no aplican V1 en `barberia_db`.
 
 ## Organización
 
-Se utiliza un monolito y un único artefacto Maven. El paquete raíz es `com.barberia.api`; solo contiene la clase de arranque en esta etapa.
+Monolito bajo `com.barberia.api`: `accounts` contiene cuentas, roles y persistencia; `auth` contiene autenticación, JWT, configuración de seguridad e inicialización administrativa; `shared.error` unifica errores HTTP.
 
-Los módulos se crearán según la especificación, agrupando el código por negocio: `com.barberia.api.<modulo>`. Dentro de cada módulo se seguirá controller → service → repository:
-
-- `controller`: contrato HTTP, validación de entrada mediante DTO y conversión de respuestas.
-- `service`: casos de uso, reglas de negocio y límites transaccionales.
-- `repository`: consultas y persistencia mediante Spring Data JPA.
-
-Los controllers delegarán en servicios; los servicios usarán repositorios. No se crearán carpetas globales de capas, módulos vacíos ni entidades anticipadas. Los DTO, entidades y pruebas se añadirán cuando exista una funcionalidad confirmada que los necesite.
-
-El alcance, las etapas y los pendientes se mantienen en [docs/alcance.md](docs/alcance.md). Las instrucciones para cambios posteriores están en [AGENTS.md](AGENTS.md).
+Se respeta **controller → service → repository**: contrato HTTP y validación mediante DTOs, reglas y transacciones en servicios, persistencia en repositorios. La inyección es por constructor; las entidades JPA no se exponen como respuestas. No se crean módulos vacíos para requisitos futuros. Las instrucciones de trabajo están en [AGENTS.md](AGENTS.md).
