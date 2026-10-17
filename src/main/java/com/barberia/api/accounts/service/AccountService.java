@@ -14,6 +14,8 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.prepost.PreAuthorize;
+import com.barberia.api.shared.error.NotFoundException;
 
 @Service
 public class AccountService {
@@ -42,12 +44,28 @@ public class AccountService {
     }
 
     private UserResponse create(RegisterRequest request, Set<Role> roles) {
+        return UserResponse.from(createAccount(request, roles));
+    }
+
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
+    public Account createBarberAccount(RegisterRequest request) {
+        return createAccount(request, Set.of(Role.BARBER));
+    }
+
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
+    public Account lockForBarberAssignment(UUID id) {
+        return accounts.findForUpdate(id).orElseThrow(NotFoundException::new);
+    }
+
+    private Account createAccount(RegisterRequest request, Set<Role> roles) {
         PasswordRules.validateRegistration(request.password());
         if (accounts.existsByEmail(request.email())) { throw new DuplicateEmailException(); }
         var account = new Account(request.name(), request.phone(), request.email(),
                 passwords.encode(request.password()), roles);
         try {
-            return UserResponse.from(accounts.saveAndFlush(account));
+            return accounts.saveAndFlush(account);
         } catch (DataIntegrityViolationException exception) {
             // La restricción resuelve también dos registros simultáneos del mismo correo.
             Throwable cause = exception;

@@ -1,6 +1,6 @@
 # barberia-api
 
-API REST para una barbería con dos sucursales, sin frontend. La primera funcionalidad implementada es **cuentas y autenticación JWT**: registro de clientes, inicio de sesión y consulta de la cuenta autenticada. Citas, invitados, sucursales, perfiles de barbero, bloqueos comerciales, ventas y pagos siguen pendientes; ver [docs/alcance.md](docs/alcance.md).
+API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas y autenticación JWT, sucursales, catálogo compartido de servicios y perfiles de barberos**. Citas, invitados, bloqueos comerciales, inventario, ventas y pagos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Los endpoints, permisos, ejemplos y transacciones del catálogo se detallan en [docs/catalogo.md](docs/catalogo.md).
 
 ## Tecnologías y decisiones
 
@@ -75,7 +75,9 @@ El ejemplo no imprime ni guarda secretos. En un entorno persistente, suministrar
 
 Flyway aplica `V1__create_accounts_and_roles.sql`: cuentas, catálogo de roles, relación de varios roles y restricciones de correo único y normalizado. Después, Hibernate comprueba las entidades con `ddl-auto=validate`. La inicialización SQL está desactivada, `clean-disabled=true` y `baseline-on-migrate=false`. No se borran esquemas ni se adopta automáticamente un esquema previo sin historial de migraciones; si Flyway detecta ese caso, revisar la base antes de continuar. No usar `ddl-auto=update` ni editar una migración ya aplicada: añadir una nueva versión.
 
-## Contrato HTTP
+V2 (`V2__business_catalog.sql`) añade sucursales con horario semanal, servicios compartidos y perfiles de barberos. Incluye las dos sucursales y cinco servicios iniciales acordados, sin direcciones ni cuentas inventadas. V1 permanece intacta. Al arrancar sobre una base aún sin migrar, Flyway aplicará ambas versiones.
+
+## Contrato HTTP de autenticación
 
 Todos los cuerpos usan JSON. Los campos desconocidos se rechazan con 400, incluyendo `roles`, `active` o `id` en el registro.
 
@@ -121,7 +123,8 @@ Los errores usan el mismo formato, sin revelar datos internos:
 | 400 | Datos inválidos, JSON incorrecto o campos no permitidos |
 | 401 | Login incorrecto o cuenta inactiva (mismo mensaje genérico); JWT ausente, inválido, expirado o cuenta ya desactivada en una ruta protegida |
 | 403 | Cuenta autenticada intentando una ruta no permitida |
-| 409 | Correo ya registrado, también ante solicitudes simultáneas |
+| 404 | Recurso de catálogo inexistente o no disponible para esa consulta |
+| 409 | Correo ya registrado, perfil duplicado o asignación a sucursal inactiva |
 
 No hay refresh tokens ni revocación individual de tokens en esta versión. Su vigencia está limitada por `JWT_EXPIRATION_SECONDS`; cerrar sesión en un cliente consiste en descartar el token, que permanece válido hasta expirar salvo desactivación de cuenta o rotación global de clave. El campo `active` representa acceso a la cuenta: los futuros bloqueos para reservar/comprar se modelarán aparte y no impedirán iniciar sesión ni consultar compromisos existentes.
 
@@ -160,7 +163,7 @@ Remove-Item Env:BOOTSTRAP_ADMIN_NAME, Env:BOOTSTRAP_ADMIN_PHONE, Env:BOOTSTRAP_A
 .\mvnw.cmd spring-boot:run
 ```
 
-Si esas variables se definieron también en la configuración persistente del IDE o del sistema, retirarlas allí. El modelo admite `ADMIN` y `BARBER` simultáneamente, pero esta entrega no añade administración de roles ni perfiles de barbero; el bootstrap crea únicamente `ADMIN`.
+Si esas variables se definieron también en la configuración persistente del IDE o del sistema, retirarlas allí. El bootstrap crea únicamente `ADMIN`. Después, una operación administrativa de asignación de perfil permite añadir `BARBER` conservando `ADMIN` y la contraseña; ver [perfiles de barbero](docs/catalogo.md#cuentas-y-perfiles-de-barbero). No existe un endpoint genérico de asignación de roles.
 
 ## Pruebas con PostgreSQL
 
@@ -173,11 +176,20 @@ $env:TEST_DB_PASSWORD = $env:DB_PASSWORD
 .\mvnw.cmd -Ppostgres-tests clean verify
 ```
 
-El perfil ejecuta **8 pruebas unitarias y 16 de integración**. Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
+El perfil ejecuta **8 pruebas unitarias y 34 de integración** (16 de autenticación y 18 de catálogo). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
 
 La integración comprueba registro, normalización y restricciones PostgreSQL, duplicados concurrentes, rechazo de asignación de privilegios, login válido/inválido, JWT válido/ausente/expirado/manipulado, cuentas inactivas, varios roles y cambios de permisos actuales, errores JSON e inicialización administrativa sin elevar cuentas existentes.
 
-## Verificación de esta entrega
+## Verificación del catálogo — 17 de octubre de 2026
+
+- `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests clean verify`: **BUILD SUCCESS**, Java 25.0.1 y Maven 3.9.11.
+- **8 pruebas unitarias y 34 de integración correctas**, sin fallos ni omisiones. Se comprobaron permisos, precios, horarios, datos iniciales, perfiles, rollback, concurrencia, privacidad y regresiones de autenticación.
+- PostgreSQL 18.1 real en `barberia_auth_test`: V2 aplicada y esquema validado con Hibernate; V1 sin modificaciones. No se aplicaron migraciones en `barberia_db`.
+- Consulta posterior de solo lectura: `barberia_db` conserva cero tablas de usuario. `git diff --check` correcto; revisión de archivos sin secretos detectados ni archivos generados entre candidatos.
+- El primer intento de integración falló por falta de `TEST_DB_USERNAME`, antes de conectar. Tras proporcionar el usuario confirmado y reutilizar `DB_PASSWORD` sin imprimirla, la ejecución completa pasó.
+- **No se realizaron nuevas pruebas manuales con un servidor HTTP en esta entrega**. Los tests usan MockMvc con el contexto Spring completo y PostgreSQL real; los arranques manuales siguientes pertenecen a la entrega anterior.
+
+## Historial de verificación: cuentas y JWT
 
 | Comprobación | Resultado |
 | --- | --- |
@@ -198,6 +210,6 @@ La comprobación histórica de la base inicial arrancó en `barberia_db` con cer
 
 ## Organización
 
-Monolito bajo `com.barberia.api`: `accounts` contiene cuentas, roles y persistencia; `auth` contiene autenticación, JWT, configuración de seguridad e inicialización administrativa; `shared.error` unifica errores HTTP.
+Monolito bajo `com.barberia.api`: `accounts` contiene cuentas y roles; `auth`, autenticación y seguridad; `branches`, sucursales y horarios semanales; `services`, catálogo de servicios; `barbers`, perfiles y asignaciones. `shared.error` unifica errores HTTP y `shared.pagination` limita y representa listados. No se exponen entidades JPA.
 
 Se respeta **controller → service → repository**: contrato HTTP y validación mediante DTOs, reglas y transacciones en servicios, persistencia en repositorios. La inyección es por constructor; las entidades JPA no se exponen como respuestas. No se crean módulos vacíos para requisitos futuros. Las instrucciones de trabajo están en [AGENTS.md](AGENTS.md).
