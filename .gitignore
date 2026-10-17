@@ -1,0 +1,50 @@
+# Maven y Java
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+*.log.*
+logs/
+hs_err_pid*
+replay_pid*
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+bin/
+out/
+.apt_generated/
+.sts4-cache/
+
+# Configuración, secretos y herramientas locales
+.env
+.env.*
+!.env.example
+.local/
+.m2/
+/.github/modernize/java-upgrade/
+application-local.properties
+application-local.yml
+application-local.yaml
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Sistema operativo y temporales
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
