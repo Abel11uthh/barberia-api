@@ -2,9 +2,9 @@
 
 ## Fuente de requisitos
 
-La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS, cuentas/autenticación JWT y el adjunto posterior de sucursales, catálogo de servicios y perfiles de barberos.
+La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS, cuentas/autenticación JWT y los adjuntos posteriores de sucursales/catálogo/perfiles y disponibilidad/reserva de citas para clientes autenticados.
 
-Esta entrega añade sucursales, catálogo compartido de servicios y perfiles de barberos a cuentas/autenticación. Los demás requisitos describen el alcance previsto. Las decisiones pendientes se conservan abiertas, sin implementar supuestos.
+Esta entrega añade disponibilidad diaria y creación/consulta de citas propias de clientes autenticados. Los demás requisitos describen el alcance previsto. Las decisiones pendientes se conservan abiertas, salvo el proveedor de pagos confirmado: Mercado Pago, cuya integración sigue pendiente.
 
 ## Objetivo
 
@@ -14,7 +14,7 @@ API REST para una barbería con dos sucursales. Busca reducir esperas mediante c
 
 Java 25 LTS sin características preview, Spring Boot 3.5.16, PostgreSQL y Maven Wrapper. Monolito organizado por módulos de negocio, con capas controller, service y repository, además de DTOs y entidades. Cuentas y JWT incorporan Spring Security, Nimbus JOSE + JWT, BCrypt y Flyway 11.20.3 con soporte PostgreSQL. Hibernate valida el esquema con `ddl-auto=validate` después de las migraciones.
 
-El flujo es controller → service → repository: contrato HTTP y validación de entrada, casos de uso y reglas de negocio, y acceso a datos, respectivamente. Existen los módulos `accounts`, `auth`, `branches`, `services` y `barbers`, además de errores HTTP y paginación compartidos. No se anticipan módulos ni entidades de otros casos de uso.
+El flujo es controller → service → repository: contrato HTTP y validación de entrada, casos de uso y reglas de negocio, y acceso a datos, respectivamente. Existen los módulos `accounts`, `auth`, `branches`, `services`, `barbers` y `appointments`, además de errores HTTP y paginación compartidos. No se anticipan módulos ni entidades de otros casos de uso.
 
 ## Usuarios y permisos
 
@@ -42,7 +42,7 @@ El flujo es controller → service → repository: contrato HTTP y validación d
 - El administrador puede bloquear horarios de un barbero.
 - El cliente debe iniciar sesión para reservar en línea.
 - Solo un administrador o barbero puede registrar una cita inmediata presencial para un invitado, siempre que exista disponibilidad.
-- El invitado aporta nombre y teléfono; no se crea una cuenta automáticamente. Citas e invitados no se implementan en esta entrega.
+- El invitado aporta nombre y teléfono; no se crea una cuenta automáticamente. Las citas de invitados no se implementan en esta entrega.
 - Las citas se cancelan; no se borran del historial.
 
 ## Cancelaciones e incidencias
@@ -83,6 +83,7 @@ El flujo es controller → service → repository: contrato HTTP y validación d
 - El reembolso tiene seguimiento propio: pendiente, completado o fallido.
 - Cancelar no equivale a confirmar que ya se devolvió el dinero.
 - La integración se demostrará inicialmente con pagos de prueba.
+- Proveedor elegido: Mercado Pago. La integración, sus dependencias y los cobros no se implementan en esta entrega.
 
 ## Reportes
 
@@ -110,10 +111,10 @@ El flujo es controller → service → repository: contrato HTTP y validación d
 
 El [README](../README.md) detalla variables, ejemplos, endpoints, inicio del primer administrador y deshabilitación posterior del mecanismo. El bootstrap solo asigna `ADMIN`. La asignación administrativa de un perfil añade exclusivamente `BARBER`; no se incorpora gestión genérica de roles.
 
-## Etapa actual: sucursales, servicios y perfiles de barberos
+## Sucursales, servicios y perfiles de barberos implementados
 
 - Sucursales: nombre, dirección opcional y estado activo; horario semanal configurable y zona `America/Mexico_City`. Crear, actualizar y desactivar requiere ADMIN; los registros se conservan.
-- Servicios: nombre, descripción opcional, precio positivo con dos decimales y estado activo. Tipos `HAIRCUT` y `ADD_ON`; precio compartido por todas las sucursales en MXN, `BigDecimal` y `NUMERIC(12,2)`. No se añade duración por servicio: las citas futuras ocupan siempre una hora completa.
+- Servicios: nombre, descripción opcional, precio positivo con dos decimales y estado activo. Tipos `HAIRCUT` y `ADD_ON`; precio compartido por todas las sucursales en MXN, `BigDecimal` y `NUMERIC(12,2)`. No se añade duración por servicio: las citas ocupan siempre una hora completa.
 - Perfiles: cuenta existente única y sucursal activa. ADMIN puede crear cuenta y perfil en una transacción reutilizando normalización de correo y BCrypt, o asignar perfil a una cuenta existente sin cambiar su contraseña ni eliminar roles. Añadir `BARBER` y crear perfil es atómico. No hay traslados, cuentas inventadas ni máximo fijo de barberos.
 - Consultas autenticadas: solo sucursales/servicios activos y barberos con cuenta, perfil y sucursal activos. Barberos filtrables por sucursal; respuesta normal limitada a identificador de perfil, nombre y sucursal, sin datos de contacto ni credenciales. Rutas administrativas protegidas permiten consultar inactivos.
 - Listados paginados con ordenación limitada a campos permitidos. Errores JSON coherentes 400, 401, 403, 404 y 409. Se conservan los controles JWT y la separación controller → service → repository.
@@ -121,6 +122,18 @@ El [README](../README.md) detalla variables, ejemplos, endpoints, inicio del pri
 - Datos iniciales acordados y modificables: Sucursal principal y Sucursal 2 con sus horarios/descansos, sin direcciones; Corte básico 100.00, Corte escolar 120.00 y Corte personalizado 150.00 como `HAIRCUT`; Arreglo de barba 50.00 y Arreglo de ceja 30.00 como `ADD_ON`, todos MXN. No se crean cuentas ni perfiles iniciales. No hay límite de dos sucursales o tres barberos.
 
 El detalle de entidades, relaciones, transacciones, endpoints, permisos y ejemplos se encuentra en [catalogo.md](catalogo.md).
+
+## Etapa actual: disponibilidad y reservas propias
+
+La entrega actual incorpora el módulo `appointments`:
+
+- Disponibilidad autenticada por sucursal, perfil y fecha local; verifica pertenencia y cuenta/perfil/sucursal activos. Lee horarios semanales persistidos; excluye descansos, ocupación y comienzos pasados. Intervalos [inicio, fin), bloques completos de una hora y comienzos exactos, Clock inyectable.
+- Reserva exclusiva CLIENT; identidad del JWT, sucursal inferida del perfil. Un HAIRCUT activo obligatorio y complementos ADD_ON activos sin duplicados. DTO sin cliente, sucursal, estado ni importes elegibles.
+- Estado inicial CONFIRMED. Instantes TIMESTAMPTZ convertidos desde America/Mexico_City, nombres/precios históricos y total BigDecimal. No representa cobro ni ingreso.
+- Revalidación transaccional e índice único parcial PostgreSQL para impedir dos reservas confirmadas del mismo barbero/bloque. V3 conserva V1 y V2. La futura cancelación liberará el índice al cambiar el estado, conservando el historial mediante una nueva migración.
+- Listado paginado y detalle exclusivamente propios; cita ajena devuelve el mismo 404 que inexistente. Disponibilidad sin datos de ocupantes. Sin consultas administrativas ni agenda del barbero.
+
+Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
 
 ## Etapas
 
@@ -130,18 +143,18 @@ El detalle de entidades, relaciones, transacciones, endpoints, permisos y ejempl
 4. Reportes.
 5. Pedidos, pagos en línea, recogidas y reembolsos.
 
-Estas son las etapas indicadas en la especificación. La primera está completada y la segunda ya incorpora cuentas, autenticación, sucursales, servicios y perfiles de barberos. Agendas y citas siguen pendientes; documentar los demás requisitos no implica haberlos implementado.
+Estas son las etapas indicadas en la especificación. La primera está completada y la segunda ya incorpora cuentas, autenticación, sucursales, servicios, perfiles y reserva/consulta de citas propias. Agendas de administración/barbero, cancelaciones, reprogramación e incidencias siguen pendientes; documentar los demás requisitos no implica haberlos implementado.
 
 ## Fuera de esta tarea
 
-- Citas, invitados, agendas y bloqueos individuales de horarios.
+- Cancelaciones, reprogramación, inasistencias, invitados, agendas administrativas o de barbero y bloqueos individuales de horarios.
 - Gestión genérica de usuarios/roles, traslados de barberos, bloqueos comerciales, recuperación de contraseña y verificación de correo.
 - Inventario, ventas y cobros.
 - Refresh tokens y revocación individual de access tokens.
 - Pagos e integraciones de pagos.
 - Docker, infraestructura y despliegue.
 - Carpetas vacías para posibles módulos futuros.
-- Merge de esta entrega. El commit, push y apertura del PR fueron autorizados en la revisión final posterior a la implementación.
+- Merge de esta entrega de citas. El commit, push y apertura del PR fueron autorizados en la revisión final posterior a la implementación.
 
 ## Decisiones pendientes
 
@@ -150,11 +163,27 @@ Los siguientes puntos permanecen abiertos; no se adoptan valores predeterminados
 - Control de duplicados de invitados (ya se confirmó identificación mediante nombre y teléfono, sin cuenta automática).
 - Canal de las advertencias.
 - Vencimientos de recogida fuera del horario de atención.
-- Proveedor de pagos.
 - Procedimiento de reembolsos presenciales.
 - Efecto de la reactivación administrativa sobre los contadores.
 
-## Verificación del catálogo — 17 de octubre de 2026
+## Verificación de disponibilidad y citas — 17 de octubre de 2026
+
+- Se partió de main limpia y sincronizada, commit `64ccd65`, y se creó `feature/appointment-booking`. La implementación se entregó inicialmente sin commit, push, merge ni PR; posteriormente se autorizó su publicación para revisión, sin merge.
+- Compilación inicial `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -DskipTests compile`: BUILD SUCCESS. Esta comprobación no se presenta como pruebas ejecutadas.
+- La primera ejecución de `-Ppostgres-tests clean verify` detectó un import ambiguo en el test nuevo, corregido. La siguiente pasó 15 unitarias y las 34 integraciones previas, pero el contexto HTTP nuevo falló por el socket interno del JDK con una ruta temporal larga de Windows. V3 se aplicó en la base de pruebas.
+- Ejecución final `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests verify`: **BUILD SUCCESS**, Java 25.0.1, **15 unitarias y 56 integraciones** sin fallos, errores u omisiones. TEMP/TMP se ajustaron solo para ese proceso a `.local/tmp`, sin cambios globales.
+- Las 22 integraciones nuevas cubren horarios persistidos, cierres, fechas/horas inválidas, pertenencia, estados activos, tipos de servicios y duplicados, precios históricos, permisos, identidad/privacidad, paginación, restricciones SQL, bloques consecutivos, barberos distintos y concurrencia HTTP.
+- Arranque automatizado real en puerto 55151 y PostgreSQL 18.1 en `barberia_auth_test`. Dos peticiones HTTP con transacciones independientes, sincronizadas sin sleeps antes de guardar, produjeron una reserva 201 y un conflicto 409. El proceso terminó al finalizar Maven. No se hizo una prueba manual adicional.
+- V1 y V2 sin modificaciones. Flyway y Hibernate verificaron V3. No se ejecutó limpieza, truncado ni migraciones en barberia_db. AGENTS solo actualiza el alcance implementado y conserva las demás instrucciones.
+- Consulta final de solo lectura: barberia_db conserva cero tablas de usuario. `git diff --check` correcto; revisión de 87 archivos candidatos sin coincidencias de secretos del entorno/tokens reales ni archivos locales o generados.
+
+## Revisión final de citas para PR
+
+- Revisado el diff completo respecto de main: identidad JWT, consultas propias, reglas temporales compartidas, revalidación transaccional, unicidad PostgreSQL y traducción a 409, precios históricos y futura liberación del bloque conservando historial.
+- V1/V2 intactas; las pruebas usan exclusivamente barberia_auth_test. El ajuste del JDK es opcional y limitado a TEMP/TMP de la sesión, con ruta relativa al proyecto, sin cambios de configuración ni rutas personales versionadas.
+- Sin correcciones de código ni configuración. Se reutiliza la verificación anterior: 15 pruebas unitarias y 56 de integración aprobadas, incluida concurrencia HTTP 201/409. Revisión de archivos sin secretos o temporales detectados; git diff --check correcto. AGENTS conserva sus restricciones y solo actualiza el alcance implementado.
+
+## Historial: verificación del catálogo — 17 de octubre de 2026
 
 - Se confirmó `main` limpia y sincronizada con `origin/main` y se creó `feature/business-catalog`. La implementación se entregó inicialmente sin commit, push, merge ni PR; después se autorizó su publicación para revisión, sin merge.
 - Compilación y empaquetado con Java 25 y Maven Wrapper correctos. Verificación completa: `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests clean verify`, **BUILD SUCCESS**.

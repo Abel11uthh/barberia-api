@@ -8,6 +8,11 @@ import org.springframework.data.domain.*;
 import org.springframework.data.jpa.repository.*;
 
 public interface BarberRepository extends JpaRepository<BarberProfile, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("select p from BarberProfile p where p.id = :id")
+    Optional<BarberProfile> findForBooking(UUID id);
+    @Query("select p.branch.id from BarberProfile p where p.id = :id")
+    Optional<UUID> findBranchId(UUID id);
     boolean existsByAccountId(UUID accountId);
     @EntityGraph(attributePaths = {"account", "branch"})
     @Query("select p from BarberProfile p where p.active = true and p.account.active = true and p.branch.active = true and (:branchId is null or p.branch.id = :branchId)")

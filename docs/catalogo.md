@@ -1,6 +1,6 @@
 # Sucursales, servicios y barberos
 
-Esta entrega incorpora los módulos `branches`, `services` y `barbers`. Conserva Java 25, Spring Boot 3.5.16, el login JWT y las convenciones de errores existentes. No implementa citas, disponibilidad por hora, bloqueos individuales, inventario, ventas ni pagos.
+La entrega del catálogo incorporó los módulos `branches`, `services` y `barbers`. Conserva Java 25, Spring Boot 3.5.16, el login JWT y las convenciones de errores existentes. La entrega posterior de [citas](citas.md) añade disponibilidad por hora y reservas propias reutilizando este catálogo. Bloqueos individuales, inventario, ventas y pagos siguen pendientes.
 
 ## Permisos y endpoints
 
@@ -38,7 +38,7 @@ Todos los listados, incluidos los administrativos, aceptan `page` (desde 0), `si
 | Servicios | `id`, `name`, `price`, `type` | — |
 | Barberos | `id`, `name` | `branchId` opcional, también en rutas administrativas |
 
-Formato: `{items: [...], page: 0, size: 20, totalElements: 2, totalPages: 1}`. Un filtro sin coincidencias devuelve página vacía. Los barberos disponibles son aquellos habilitados en el catálogo; esta entrega no calcula huecos horarios ni citas.
+Formato: `{items: [...], page: 0, size: 20, totalElements: 2, totalPages: 1}`. Un filtro sin coincidencias devuelve página vacía. Los barberos disponibles son aquellos habilitados en el catálogo; los bloques horarios se consultan mediante el endpoint de disponibilidad de [citas](citas.md).
 
 Cada elemento del catálogo normal de barberos contiene **exactamente** `id` (del perfil), `name` y `branch: {id, name}`. No incluye identificador de cuenta, correo, teléfono, contraseña o hash. La respuesta administrativa añade únicamente `active`, `accountActive` y `branchActive`; tampoco revela esas credenciales o datos de contacto.
 
@@ -73,7 +73,7 @@ Ejemplo de cuerpo para POST/PUT:
 {"name":"Servicio de ejemplo","description":null,"price":100.00,"type":"HAIRCUT"}
 ```
 
-No hay duración por servicio: las futuras citas comenzarán a horas exactas y ocuparán una hora completa.
+No hay duración por servicio: las citas comienzan a horas exactas y ocupan una hora completa.
 
 ## Cuentas y perfiles de barbero
 

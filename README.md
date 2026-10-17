@@ -1,6 +1,6 @@
 # barberia-api
 
-API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas y autenticación JWT, sucursales, catálogo compartido de servicios y perfiles de barberos**. Citas, invitados, bloqueos comerciales, inventario, ventas y pagos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Los endpoints, permisos, ejemplos y transacciones del catálogo se detallan en [docs/catalogo.md](docs/catalogo.md).
+API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas y autenticación JWT, sucursales, catálogo compartido, perfiles de barberos y disponibilidad/reserva de citas para clientes autenticados**. Cancelaciones, reprogramación, inasistencias, invitados, bloqueos, inventario, ventas y pagos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos y ejemplos: [catálogo](docs/catalogo.md) y [citas](docs/citas.md). Mercado Pago será el proveedor de pagos futuro; todavía no hay integración.
 
 ## Tecnologías y decisiones
 
@@ -33,7 +33,7 @@ $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 
 Maven debe indicar Java 25. En el IDE, seleccionar JDK 25 como SDK del proyecto y como JDK para importar/ejecutar Maven; nivel de lenguaje 25 sin preview. Estos ajustes son locales. En Linux/macOS, configurar `JAVA_HOME` y ejecutar `sh ./mvnw clean verify`.
 
-El comando anterior compila, empaqueta y ejecuta **8 pruebas unitarias**, sin necesitar PostgreSQL. Las pruebas de integración requieren el perfil descrito más adelante. El JAR queda en `target/barberia-api-0.0.1-SNAPSHOT.jar`.
+El comando anterior compila, empaqueta y ejecuta **15 pruebas unitarias**, sin necesitar PostgreSQL. Las pruebas de integración requieren el perfil descrito más adelante. El JAR queda en `target/barberia-api-0.0.1-SNAPSHOT.jar`.
 
 ## Variables y ejecución
 
@@ -75,7 +75,7 @@ El ejemplo no imprime ni guarda secretos. En un entorno persistente, suministrar
 
 Flyway aplica `V1__create_accounts_and_roles.sql`: cuentas, catálogo de roles, relación de varios roles y restricciones de correo único y normalizado. Después, Hibernate comprueba las entidades con `ddl-auto=validate`. La inicialización SQL está desactivada, `clean-disabled=true` y `baseline-on-migrate=false`. No se borran esquemas ni se adopta automáticamente un esquema previo sin historial de migraciones; si Flyway detecta ese caso, revisar la base antes de continuar. No usar `ddl-auto=update` ni editar una migración ya aplicada: añadir una nueva versión.
 
-V2 (`V2__business_catalog.sql`) añade sucursales con horario semanal, servicios compartidos y perfiles de barberos. Incluye las dos sucursales y cinco servicios iniciales acordados, sin direcciones ni cuentas inventadas. V1 permanece intacta. Al arrancar sobre una base aún sin migrar, Flyway aplicará ambas versiones.
+V2 (`V2__business_catalog.sql`) añade sucursales con horario semanal, servicios compartidos y perfiles de barberos. Incluye las dos sucursales y cinco servicios iniciales acordados, sin direcciones ni cuentas inventadas. V3 (`V3__appointments.sql`) añade citas, copias históricas de servicios y protección PostgreSQL contra reservas simultáneas. V1 y V2 permanecen intactas. Al arrancar sobre una base aún sin migrar, Flyway aplicará las tres versiones.
 
 ## Contrato HTTP de autenticación
 
@@ -176,11 +176,33 @@ $env:TEST_DB_PASSWORD = $env:DB_PASSWORD
 .\mvnw.cmd -Ppostgres-tests clean verify
 ```
 
-El perfil ejecuta **8 pruebas unitarias y 34 de integración** (16 de autenticación y 18 de catálogo). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
+El perfil ejecuta **15 pruebas unitarias y 56 de integración** (16 de autenticación, 18 de catálogo y 22 de citas). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
 
 La integración comprueba registro, normalización y restricciones PostgreSQL, duplicados concurrentes, rechazo de asignación de privilegios, login válido/inválido, JWT válido/ausente/expirado/manipulado, cuentas inactivas, varios roles y cambios de permisos actuales, errores JSON e inicialización administrativa sin elevar cuentas existentes.
 
-## Verificación del catálogo — 17 de octubre de 2026
+## Verificación de citas — 17 de octubre de 2026
+
+- Compilación y empaquetado correctos con Java 25.0.1 y Maven Wrapper. Comando final: `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests verify`, **BUILD SUCCESS**.
+- **15 pruebas unitarias y 56 de integración**, sin fallos ni omisiones: 7 unitarias de horarios, las 8 previas, 22 integraciones de citas y las 34 previas.
+- V3 aplicada y Hibernate validado en PostgreSQL 18.1, exclusivamente en `barberia_auth_test`. V1 y V2 no cambian.
+- Servidor de prueba iniciado en el puerto HTTP 55151. Dos peticiones HTTP concurrentes, con transacciones independientes y barrera antes de guardar, dieron exactamente **201 y 409**, una sola cita y sus copias históricas completas.
+- No se realizó una prueba HTTP manual ni un arranque nuevo contra la base de negocio. El servidor de integración terminó con Maven.
+- Consulta final de solo lectura: `barberia_db` conserva cero tablas de usuario. V1/V2 sin diff; `git diff --check` correcto. Revisión de 87 archivos candidatos sin coincidencias de secretos del entorno, tokens reales ni archivos locales/generados.
+- Se corrigió un import ambiguo detectado al compilar los tests. El primer intento de integración no inició el nuevo contexto HTTP por un error del JDK al crear un socket interno con la ruta temporal larga de Windows; sí pasaron las pruebas previas. La ejecución final completa pasó usando `TEMP` y `TMP` cortos, solo en esa sesión.
+
+Si el entorno Windows presenta `Unable to establish loopback connection` al iniciar el cliente HTTP del JDK, usar una ruta temporal corta local antes de Maven:
+
+```powershell
+$testTemp = Join-Path (Get-Location) '.local\tmp'
+New-Item -ItemType Directory -Path $testTemp -Force | Out-Null
+$env:TEMP = $testTemp
+$env:TMP = $testTemp
+.\mvnw.cmd -Ppostgres-tests verify
+```
+
+`.local/` está ignorado. No modificar variables globales ni desactivar las pruebas HTTP. Los contratos y la garantía contra dobles reservas se detallan en [citas.md](docs/citas.md).
+
+## Historial: verificación del catálogo — 17 de octubre de 2026
 
 - `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests clean verify`: **BUILD SUCCESS**, Java 25.0.1 y Maven 3.9.11.
 - **8 pruebas unitarias y 34 de integración correctas**, sin fallos ni omisiones. Se comprobaron permisos, precios, horarios, datos iniciales, perfiles, rollback, concurrencia, privacidad y regresiones de autenticación.
@@ -210,6 +232,6 @@ La comprobación histórica de la base inicial arrancó en `barberia_db` con cer
 
 ## Organización
 
-Monolito bajo `com.barberia.api`: `accounts` contiene cuentas y roles; `auth`, autenticación y seguridad; `branches`, sucursales y horarios semanales; `services`, catálogo de servicios; `barbers`, perfiles y asignaciones. `shared.error` unifica errores HTTP y `shared.pagination` limita y representa listados. No se exponen entidades JPA.
+Monolito bajo `com.barberia.api`: `accounts` contiene cuentas y roles; `auth`, autenticación y seguridad; `branches`, sucursales y horarios semanales; `services`, catálogo de servicios; `barbers`, perfiles y asignaciones; `appointments`, disponibilidad y reservas propias. `shared.error` unifica errores HTTP y `shared.pagination` limita y representa listados. No se exponen entidades JPA.
 
 Se respeta **controller → service → repository**: contrato HTTP y validación mediante DTOs, reglas y transacciones en servicios, persistencia en repositorios. La inyección es por constructor; las entidades JPA no se exponen como respuestas. No se crean módulos vacíos para requisitos futuros. Las instrucciones de trabajo están en [AGENTS.md](AGENTS.md).
