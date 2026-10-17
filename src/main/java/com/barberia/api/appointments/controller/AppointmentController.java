@@ -2,6 +2,7 @@ package com.barberia.api.appointments.controller;
 
 import com.barberia.api.appointments.dto.*;
 import com.barberia.api.appointments.service.AppointmentService;
+import com.barberia.api.appointments.service.AgendaService;
 import com.barberia.api.auth.security.AccountPrincipal;
 import com.barberia.api.shared.pagination.PageResponse;
 import jakarta.validation.Valid;
@@ -17,7 +18,12 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/appointments")
 public class AppointmentController {
     private final AppointmentService service;
-    public AppointmentController(AppointmentService service) { this.service = service; }
+    private final AgendaService agenda;
+    public AppointmentController(AppointmentService service, AgendaService agenda) { this.service = service; this.agenda=agenda; }
+
+    @PostMapping("/{id}/cancel")
+    public AppointmentResponse cancel(@AuthenticationPrincipal AccountPrincipal principal,@PathVariable UUID id,
+            @Valid @RequestBody CancelRequest request) { return agenda.cancelOwn(principal.id(),id,request); }
 
     @GetMapping("/availability")
     public AvailabilityResponse availability(@RequestParam UUID branchId, @RequestParam UUID barberId,

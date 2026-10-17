@@ -1,6 +1,6 @@
 # barberia-api
 
-API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas y autenticación JWT, sucursales, catálogo compartido, perfiles de barberos y disponibilidad/reserva de citas para clientes autenticados**. Cancelaciones, reprogramación, inasistencias, invitados, bloqueos, inventario, ventas y pagos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos y ejemplos: [catálogo](docs/catalogo.md) y [citas](docs/citas.md). Mercado Pago será el proveedor de pagos futuro; todavía no hay integración.
+API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas/JWT, catálogo, reservas propias y operación de agenda: atención inmediata de invitados, agenda del personal, estados, cancelaciones y bloqueos individuales**. Contadores, advertencias, bloqueos comerciales, vinculación de invitados, reprogramación, inventario, ventas y pagos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos y ejemplos: [catálogo](docs/catalogo.md) y [citas](docs/citas.md). Mercado Pago será el proveedor de pagos futuro; todavía no hay integración.
 
 ## Tecnologías y decisiones
 
@@ -75,7 +75,9 @@ El ejemplo no imprime ni guarda secretos. En un entorno persistente, suministrar
 
 Flyway aplica `V1__create_accounts_and_roles.sql`: cuentas, catálogo de roles, relación de varios roles y restricciones de correo único y normalizado. Después, Hibernate comprueba las entidades con `ddl-auto=validate`. La inicialización SQL está desactivada, `clean-disabled=true` y `baseline-on-migrate=false`. No se borran esquemas ni se adopta automáticamente un esquema previo sin historial de migraciones; si Flyway detecta ese caso, revisar la base antes de continuar. No usar `ddl-auto=update` ni editar una migración ya aplicada: añadir una nueva versión.
 
-V2 (`V2__business_catalog.sql`) añade sucursales con horario semanal, servicios compartidos y perfiles de barberos. Incluye las dos sucursales y cinco servicios iniciales acordados, sin direcciones ni cuentas inventadas. V3 (`V3__appointments.sql`) añade citas, copias históricas de servicios y protección PostgreSQL contra reservas simultáneas. V1 y V2 permanecen intactas. Al arrancar sobre una base aún sin migrar, Flyway aplicará las tres versiones.
+V2 (`V2__business_catalog.sql`) añade sucursales, horarios, servicios y perfiles, con los datos iniciales acordados. V3 añade citas y precios históricos. V4 (`V4__agenda_operations.sql`) adapta citas existentes, incorpora estados, invitados, auditoría, bloqueos y una tabla común de ocupaciones con exclusión PostgreSQL contra cualquier solapamiento. V1/V2/V3 permanecen intactas; una base nueva recibe las cuatro migraciones.
+
+V4 necesita `btree_gist`: la instala en la base conectada si el usuario de migración tiene permisos; alternativamente puede preinstalarla su administrador. No cambia privilegios globales. Consultar [instalación, permisos y garantía de concurrencia](docs/citas.md#extensión-y-permisos) antes de migrar. La nueva protección cubre intervalos distintos que se solapan, no solo comienzos iguales.
 
 ## Contrato HTTP de autenticación
 
@@ -176,11 +178,21 @@ $env:TEST_DB_PASSWORD = $env:DB_PASSWORD
 .\mvnw.cmd -Ppostgres-tests clean verify
 ```
 
-El perfil ejecuta **15 pruebas unitarias y 56 de integración** (16 de autenticación, 18 de catálogo y 22 de citas). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
+El perfil ejecuta **15 pruebas unitarias y 79 de integración** (16 de autenticación, 18 de catálogo, 22 de reservas y 23 de operación de agenda). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
 
 La integración comprueba registro, normalización y restricciones PostgreSQL, duplicados concurrentes, rechazo de asignación de privilegios, login válido/inválido, JWT válido/ausente/expirado/manipulado, cuentas inactivas, varios roles y cambios de permisos actuales, errores JSON e inicialización administrativa sin elevar cuentas existentes.
 
-## Verificación de citas — 17 de octubre de 2026
+## Verificación de operación de agenda — 17 de octubre de 2026
+
+- Java 25.0.1 y Maven Wrapper: `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests clean verify`, **BUILD SUCCESS**; compilación, empaquetado, **15 unitarias y 79 integraciones** sin fallos ni omisiones.
+- V4 y btree_gist aplicados exclusivamente en PostgreSQL 18.1, base `barberia_auth_test`. Se migraron las reservas existentes y Hibernate validó el esquema.
+- Tres carreras nuevas con transacciones independientes y barreras sin sleeps: presencial/presencial con inicios distintos, reserva/presencial y bloqueo/reserva. Cada una dejó exactamente una operación persistida, con respuestas 201 y 409.
+- Las 23 pruebas nuevas incluyen ejemplos presenciales, permisos, privacidad de agenda, precios históricos, invitados sin cuentas, estados/idempotencia, cancelación a 60/59 minutos, auditoría y conservación/liberación de ocupación. Se ejecutaron todas las regresiones.
+- Arranque automatizado HTTP de la suite anterior en puerto 51307; las nuevas operaciones se verificaron con MockMvc y PostgreSQL real. No se realizó una prueba manual nueva ni un arranque contra barberia_db. El proceso de pruebas terminó.
+- TEMP/TMP se limitaron a la ruta corta local ignorada descrita abajo; no se cambiaron ajustes globales ni se incluyeron secretos. No se añadieron dependencias Java ni se cambiaron versiones.
+- Consulta final de solo lectura: barberia_db conserva cero tablas de usuario. V1/V2/V3 sin diff; git diff --check correcto; 103 archivos candidatos revisados sin coincidencias de secretos del entorno/tokens reales ni archivos locales/generados.
+
+## Historial: verificación de citas — 17 de octubre de 2026
 
 - Compilación y empaquetado correctos con Java 25.0.1 y Maven Wrapper. Comando final: `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests verify`, **BUILD SUCCESS**.
 - **15 pruebas unitarias y 56 de integración**, sin fallos ni omisiones: 7 unitarias de horarios, las 8 previas, 22 integraciones de citas y las 34 previas.

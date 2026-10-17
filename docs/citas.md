@@ -1,21 +1,34 @@
-# Disponibilidad y reserva de citas
+# Citas y operación de la agenda
 
-Esta entrega añade el módulo `appointments`: disponibilidad diaria, reserva y consultas propias. Reutiliza JWT y roles actuales, Java 25, Spring Boot 3.5.16, Maven Wrapper y las respuestas de error existentes. No añade dependencias.
+El módulo `appointments` cubre reservas de clientes, atención presencial inmediata, agenda del personal, estados, cancelaciones y bloqueos individuales. Conserva Java 25, Spring Boot 3.5.16, JWT, DTOs y controller → service → repository. Una cita o atención completada no representa un cobro.
 
 ## Rutas y permisos
 
-Todas requieren Bearer JWT válido y cuenta activa. Para reservar y consultar citas propias se requiere **CLIENT**, incluso si la cuenta también tiene ADMIN o BARBER. Tener solo ADMIN o BARBER no habilita esas operaciones.
+Todas requieren JWT válido y cuenta activa. Los roles se consultan actualmente en PostgreSQL; la identidad nunca procede del request. Un usuario con ADMIN y BARBER puede operar como administrador. CLIENT solo accede a sus citas; conocer un identificador no concede permisos.
 
-| Método y ruta | Permiso | Resultado |
-| --- | --- | --- |
-| GET /api/v1/appointments/availability?branchId={id}&barberId={id}&date=2030-01-07 | Autenticado | 200, bloques libres de ese barbero, sucursal y fecha |
-| POST /api/v1/appointments | CLIENT | 201, cita y cabecera Location |
-| GET /api/v1/appointments?page=0&size=20&sort=startsAt,desc | CLIENT | Página de citas del cliente autenticado |
-| GET /api/v1/appointments/{id} | CLIENT propietario | 200, detalle histórico |
+| Método y ruta | Permiso y resultado |
+| --- | --- |
+| GET /api/v1/appointments/availability?branchId={id}&barberId={id}&date=2030-01-07 | Autenticado; 200 con bloques libres, sin datos de ocupantes |
+| POST /api/v1/appointments | CLIENT; 201 y Location |
+| GET /api/v1/appointments?page=0&size=20&sort=startsAt,desc | CLIENT; página exclusivamente propia |
+| GET /api/v1/appointments/{id} | CLIENT propietario; 200 |
+| POST /api/v1/appointments/{id}/cancel | CLIENT propietario; cancelación de CONFIRMED con al menos 60 minutos |
+| POST /api/v1/staff/appointments/walk-ins | BARBER para sí mismo; ADMIN para cualquier barbero disponible; 201 y Location |
+| GET /api/v1/staff/appointments?date=2030-01-07&status=CONFIRMED | BARBER: agenda propia; ADMIN: todas las sucursales |
+| GET /api/v1/staff/appointments/{id} | BARBER propietario de la atención o ADMIN |
+| POST /api/v1/staff/appointments/{id}/start | BARBER de la cita o ADMIN |
+| POST /api/v1/staff/appointments/{id}/complete | BARBER de la cita o ADMIN |
+| POST /api/v1/staff/appointments/{id}/no-show | BARBER de la cita o ADMIN |
+| POST /api/v1/staff/appointments/{id}/cancel | BARBER de la cita o ADMIN; motivo obligatorio |
+| POST /api/v1/admin/blocks | ADMIN; 201 con bloqueo |
+| POST /api/v1/admin/blocks/{id}/cancel | ADMIN; conserva el bloqueo cancelado |
+| GET /api/v1/staff/blocks?date=2030-01-07 | BARBER: bloqueos propios; ADMIN: todos |
 
-El listado acepta `page >= 0`, `size` de 1 a 100 y ordenación por `startsAt` o `id`, asc/desc. El orden predeterminado es startsAt descendente con id como desempate. No acepta filtros por cliente ni incluye citas ajenas.
+Las agendas requieren `date` local y admiten `barberId` opcional. La agenda de citas también admite `branchId` y `status` (uno de los cinco estados documentados). BARBER no puede seleccionar otro perfil; el filtro de sucursal nunca amplía su alcance. Incluyen registros cuyo intervalo intersecta el día local, incluso si un bloqueo comenzó el día anterior.
 
-Ejemplo de cuerpo de reserva, con UUID ficticios que deben sustituirse por identificadores del catálogo activo:
+Paginación común: `page >= 0`, `size` entre 1 y 100, respuesta `{items, page, size, totalElements, totalPages}`. Agendas ordenadas por startsAt ascendente e id; listado de cliente permite únicamente startsAt/id y asc/desc, predeterminado startsAt descendente. Las consultas del personal permiten atender compromisos existentes aunque se haya desactivado un perfil; las nuevas reservas/presenciales/bloqueos requieren cuenta, perfil y sucursal del barbero activos.
+
+## Reserva programada
 
 ```json
 {
@@ -27,61 +40,121 @@ Ejemplo de cuerpo de reserva, con UUID ficticios que deben sustituirse por ident
 }
 ```
 
-`barberId` es el identificador del **perfil**, no el de la cuenta. Fecha y hora son locales. `primaryServiceId` es obligatorio, activo y HAIRCUT. Los complementos deben ser ADD_ON activos, sin duplicados ni valores nulos. `addOnIds` omitido, nulo o vacío significa sin complementos. No admite clientId, branchId, status, precio ni total: los campos desconocidos se rechazan. La sucursal se infiere del perfil y el cliente del principal autenticado.
+Los UUID son ejemplos; sustituir por identificadores del catálogo. `barberId` identifica el perfil, no la cuenta. Cliente y creador proceden del JWT; sucursal del perfil; estado CONFIRMED y origen RESERVATION. El request no acepta cliente, sucursal, estado, origen ni importes. La consulta de disponibilidad no retiene un intervalo: la creación revalida dentro de su transacción.
 
-Respuesta de disponibilidad (ejemplo parcial):
+Debe haber un HAIRCUT activo obligatorio y complementos ADD_ON activos sin duplicados ni elementos nulos. Complementos omitidos, nulos o vacíos significan ninguno. Se comparte esta validación con atención presencial.
+
+## Atención inmediata
 
 ```json
 {
-  "branchId": "10000000-0000-0000-0000-000000000001",
   "barberId": "30000000-0000-0000-0000-000000000001",
-  "date": "2030-01-07",
-  "timeZone": "America/Mexico_City",
-  "slots": [
-    {"startsAt": "2030-01-07T15:00:00Z", "endsAt": "2030-01-07T16:00:00Z"}
-  ]
+  "guestName": "Invitado de ejemplo",
+  "guestPhone": "0000000000",
+  "primaryServiceId": "20000000-0000-0000-0000-000000000001",
+  "addOnIds": []
 }
 ```
 
-La cita devuelve `id, barberId, branchId, startsAt, endsAt, timeZone, status, services, total, currency`. Cada elemento de services contiene `serviceId, name, type, price`, como copia histórica; el primero es el corte principal. Estado CONFIRMED, moneda MXN. Nunca devuelve datos de contacto, credenciales ni identidad de otros clientes. El listado usa el formato existente `{items, page, size, totalElements, totalPages}`.
+Nombre obligatorio de hasta 120 caracteres y teléfono obligatorio de hasta 32. No se crea una cuenta ni se vincula por teléfono. Identificación, deduplicación y vinculación de invitados quedan pendientes.
 
-Flujo: iniciar sesión → consultar sucursales/barberos/servicios activos → consultar disponibilidad → enviar reserva con el JWT → consultar lista o detalle propios. La disponibilidad no retiene ni garantiza el bloque; un competidor puede reservarlo antes.
+El servidor obtiene el comienzo mediante Clock y lo trunca al minuto: 14:25:49 produce 14:25–15:25. Nunca acepta fecha/hora de inicio desde el request. Guarda creador autenticado, origen WALK_IN y estado IN_PROGRESS; startedAt registra el instante real de la operación. Se toma el reloj después de adquirir los bloqueos de catálogo, para evitar usar una hora anterior a una espera.
 
-## Reglas temporales
+BARBER solo puede seleccionar su propio perfil y su sucursal; ADMIN cualquiera activo. La respuesta del personal contiene `appointment`, `customer: {name, phone, guest}`, `createdBy` y `cancelledBy`. Los clientes registrados se consultan por su cuenta explícita, nunca por coincidencia de teléfono. No se incluyen correo, contraseñas, hashes ni tokens.
 
-Se leen los horarios semanales de la sucursal en PostgreSQL. No hay horarios de atención duplicados en Java. Se construyen bloques de una hora a horas exactas que caben completos dentro de la apertura/cierre; se excluyen descansos, citas CONFIRMED y comienzos anteriores al Clock inyectado. Un inicio exactamente igual al instante actual se permite. Un día cerrado o pasado devuelve una lista vacía.
+## Tiempo, disponibilidad y precios
 
-Todos los intervalos son **[inicio, fin)**. El final de una cita puede coincidir con el inicio de otra; el final del bloque puede coincidir con el cierre o inicio del descanso. Con los horarios iniciales, principal admite 09–10 y excluye 10–11; sucursal 2 admite 10–11 y excluye 11–12. Ambas terminan con 17–18 y cierran el domingo.
+Zona fija **America/Mexico_City**, independiente del equipo. Fecha/hora local de reserva → Instant → TIMESTAMPTZ; respuestas ISO-8601 UTC. Ejemplo: 09:00 del 7 de enero de 2030 = 15:00Z. Bloqueos aceptan instantes ISO-8601 con offset o Z, no horas locales ambiguas.
 
-La API convierte fecha/hora local usando `America/Mexico_City` a `Instant`; PostgreSQL guarda `TIMESTAMPTZ` y las respuestas son ISO-8601 UTC (`Z`). Por ejemplo 09:00 local del 7 de enero de 2030 equivale a 15:00Z. No se usa la zona del sistema operativo. Horas locales ambiguas/inexistentes se rechazan; disponibilidad omite bloques que atraviesen un cambio de zona y no duren exactamente una hora real. Las pruebas fijan el reloj; la aplicación usa el Clock UTC ya existente para JWT.
+Todas las citas duran una hora real. Reservas comienzan a horas exactas; presenciales a cualquier minuto desde el reloj del servidor. Los horarios semanales y descansos se leen de PostgreSQL. El intervalo completo debe caber en la apertura/cierre sin tocar el interior de descansos u ocupaciones. Se usa el mismo criterio **[inicio, fin)** para las tres clases de ocupación. Horas locales ambiguas o inexistentes no se reservan.
 
-## Modelo, transacción y concurrencia
+- Principal admite 09–10 y excluye 10–11; sucursal 2 admite 10–11 y excluye 11–12.
+- Última reserva 17–18; presencial 17:01 no cabe si el cierre es 18:00.
+- Domingo cerrado; disponibilidad pasada vacía.
+- Una atención 14:25–15:25 impide otra a las 15:10.
+- Una reserva a las 15:00 impide comenzar atención inmediata a las 14:25.
+- Si hay reserva a las 16:00, una nueva atención a las 15:25 no cabe.
+- 14:25–15:25 y 15:25–16:25 son adyacentes y válidas si respetan las demás reglas.
+- COMPLETED y NO_SHOW siguen ocupando su intervalo original. Terminar temprano no permite atender antes del fin reservado.
+- Solo CANCELLED libera la ocupación, sin borrar ninguna fila del historial.
 
-V3 añade:
+Los servicios guardan copias de identificador, nombre, tipo y precio; total calculado con BigDecimal. Cambiar o desactivar el catálogo no altera una cita histórica. Se conserva el primer elemento como HAIRCUT y los siguientes como ADD_ON. No hay estados de pago.
 
-- `appointments`: cliente, perfil y sucursal mediante claves foráneas, inicio/fin, estado CONFIRMED, total NUMERIC(19,2) y creación. Restricciones de duración exacta de una hora, inicio alineado a hora local y total positivo.
-- `appointment_services`: copia del identificador, nombre, tipo y precio NUMERIC(12,2). Posición cero HAIRCUT; las siguientes ADD_ON. Un servicio no puede repetirse en una cita. La validación del servicio exige un corte y calcula el total con BigDecimal. Las claves foráneas conservan las referencias; cambiar o desactivar el catálogo no altera las copias.
-- Índice único parcial `appointments_confirmed_slot(barber_id, starts_at) WHERE status = 'CONFIRMED'`. La duración y alineación fijas hacen que un mismo inicio sea el único empalme posible. PostgreSQL impide que dos transacciones creen ese bloque, incluso desde instancias distintas de la API.
-- Índice `(client_id, starts_at, id)` para las consultas propias; el índice parcial sirve también para consultar ocupación de un barbero.
+La respuesta de cliente incluye `id, barberId, branchId, startsAt, endsAt, timeZone, status, services, total, currency, origin, startedAt, completedAt, noShowAt, cancelledAt, cancellationReason, cancellationOrigin`. No incluye contactos de otras personas ni identificadores de actores del personal. Las fechas de acciones no realizadas son nulas. Disponibilidad devuelve únicamente `branchId, barberId, date, timeZone, slots: [{startsAt, endsAt}]`.
 
-La transacción valida nuevamente cuenta, perfil, sucursal, horario, servicios y ocupación. Bloqueos compartidos de filas mantienen estables los estados y el catálogo mientras se guarda, sin impedir que dos reservas compitan por el índice único. Se bloquea primero la sucursal y el perfil; servicios en orden de UUID. La infracción de unicidad PostgreSQL 23505 devuelve 409 y revierte toda la reserva, incluidos sus servicios.
+## Estados e idempotencia
 
-Para cancelar en una entrega futura se añadirá un estado mediante **otra migración** y una transición autorizada que cambie CONFIRMED a ese estado. La fila dejará de participar en el índice parcial, liberando el bloque sin borrar la cita ni sus precios históricos. No existe aún esa transición.
+| Operación | Estado inicial | Estado final | Condición |
+| --- | --- | --- | --- |
+| Reservar | — | CONFIRMED | CLIENT y una hora disponible |
+| Registrar presencial | — | IN_PROGRESS | Personal autorizado y una hora disponible ahora |
+| Comenzar | CONFIRMED | IN_PROGRESS | Ahora >= startsAt |
+| Completar | IN_PROGRESS | COMPLETED | Atención iniciada, incluso antes del fin |
+| Inasistencia | CONFIRMED | NO_SHOW | Ahora >= endsAt, sin inicio previo |
+| Cancelar | CONFIRMED | CANCELLED | Reglas del actor descritas abajo |
 
-V1 y V2 permanecen intactas. Se conserva `ddl-auto=validate`, Flyway sin limpieza ni baseline automático. No se migra ni limpia barberia_db durante pruebas.
+Las acciones no cambian startsAt/endsAt ni extienden la reserva. Comenzar tarde no desplaza compromisos posteriores. No se impone una nueva política de tolerancia de llegada; se verifica que la cita siga confirmada y que no se comience antes de su hora.
 
-## Errores y privacidad
+Las filas se bloquean para actualizar estado. Repetir start mientras sigue IN_PROGRESS, complete sobre COMPLETED, no-show sobre NO_SHOW o cancel sobre CANCELLED devuelve el resultado existente: no sustituye actor, fecha ni motivo. Otra transición desde un estado final devuelve 409. Los permisos se comprueban antes de devolver una repetición. Crear una reserva/presencial no usa claves de idempotencia; una repetición que solape obtiene 409.
 
-- 400: campos obligatorios ausentes, fecha/hora mal formada, inicio no exacto o pasado al reservar, tipos incorrectos, complementos duplicados/nulos, campos adicionales o paginación inválida.
-- 401: JWT ausente/inválido/expirado o cuenta inactiva.
-- 403: falta CLIENT en reserva/listado/detalle.
-- 404: recurso inexistente/inactivo, barbero que no pertenece a la sucursal consultada o cita ajena. Cita ajena e inexistente tienen el mismo código y mensaje.
-- 409: bloque ocupado, cerrado, fuera de atención o en descanso; también competencia resuelta por el índice único.
+## Cancelaciones
 
-Se conserva el JSON común `timestamp, status, code, message`. La disponibilidad solo expone instantes, nunca datos del ocupante. Las consultas propias incluyen client_id en la consulta SQL; conocer un UUID no concede permiso.
+El cliente envía `{}` o `{"reason":"Motivo opcional"}`. Solo cancela sus CONFIRMED; exactamente 60 minutos de anticipación se acepta, 59 no. Un usuario con varios roles puede usar esta ruta como cliente, manteniendo sus límites y atribución CLIENT.
 
-## Límites de la entrega
+El personal envía `{"reason":"Motivo de la cancelación"}`, no vacío y hasta 500 caracteres. BARBER solo sus citas, ADMIN cualquiera. Sin límite de anticipación para CONFIRMED; no se cancela una atención ya iniciada. La ruta de personal atribuye el origen STAFF, nunca al cliente.
 
-Sin cancelaciones, reprogramación, inasistencias, invitados, bloqueos individuales/comerciales, agenda administrativa o del barbero, ni cobros. Una cita confirmada y su total no representan ingresos recibidos. **Mercado Pago** está elegido para la integración futura, sin código ni dependencias de pagos.
+Se guardan actor, instante, motivo y origen CLIENT/STAFF. Repetir una cancelación autorizada conserva la auditoría original. Cancelación y liberación de ocupación se realizan en una sola transacción. Sin reembolsos ni simulación de devoluciones. Contadores, advertencias, penalizaciones y bloqueos comerciales siguen pendientes.
 
-Las actualizaciones administrativas de horario no reprograman citas existentes; estas conservan sus instantes e historial. No se añade una política de modificación de compromisos existentes en esta entrega.
+## Bloqueos individuales
+
+```json
+{
+  "barberId": "30000000-0000-0000-0000-000000000001",
+  "startsAt": "2030-01-07T20:25:00Z",
+  "endsAt": "2030-01-07T21:25:00Z",
+  "reason": "Ausencia de ejemplo"
+}
+```
+
+Solo ADMIN crea/cancela. Inicio anterior a fin y no anterior al instante actual; motivo obligatorio de hasta 500 caracteres. Pueden cubrir intervalos no alineados a horas exactas y más de una hora. Son indisponibilidades administrativas: pueden cubrir días completos o períodos fuera del horario de atención; no amplían los horarios en que se admiten citas.
+
+No se cancelan ni desplazan citas. Solapar una ocupación activa, incluido otro bloqueo, devuelve 409. Se conservan creador/fecha, estado ACTIVE/CANCELLED y actor/fecha de cancelación. Cancelar repetidamente es idempotente. La consulta del personal mantiene bloqueos cancelados para el historial.
+
+## PostgreSQL: V4 y garantía contra solapamientos
+
+V1, V2 y V3 permanecen intactas. **V4** adapta las citas existentes a RESERVATION y atribuye su creación a su cliente. Amplía estados y datos de invitado/auditoría; conserva duración de una hora y aplica precisión por origen. Añade barber_blocks y agenda_occupations, claves foráneas, restricciones de estados y auditoría, e índices para las agendas por barbero/sucursal y fecha.
+
+El índice V3 de igualdad de inicio ya no basta y V4 lo sustituye por una restricción de exclusión en la tabla común:
+
+```sql
+EXCLUDE USING gist (
+  barber_id WITH =,
+  tstzrange(starts_at, ends_at, '[)') WITH &&
+) WHERE (active)
+```
+
+Cada ocupación tiene exactamente una fuente: appointment_id o block_id, únicos y con clave foránea. Se migran las ocupaciones existentes sin eliminar datos. Si existieran históricos incompatibles, la migración falla; no los limpia ni los oculta.
+
+Triggers PostgreSQL sincronizan las ocupaciones al insertar o cambiar el estado/intervalo de una cita o bloqueo, dentro de la misma transacción. CONFIRMED, IN_PROGRESS, COMPLETED y NO_SHOW producen active=true; CANCELLED produce active=false. Nunca se borra la ocupación al cancelar. Esto también protege escrituras SQL sobre las tablas fuente. No se debe escribir directamente la tabla derivada agenda_occupations ni deshabilitar sus triggers.
+
+Dos transacciones independientes que intenten ocupar intervalos solapados para el mismo barbero no pueden confirmar ambas. La aplicación realiza una comprobación previa para responder pronto, pero la garantía final es PostgreSQL. SQLSTATE **23P01** (exclusión) se traduce a 409; se conserva el tratamiento 23505 de unicidad. El rollback incluye cita/bloqueo, servicios y ocupación. No hay synchronized ni locks Java de producción.
+
+La disponibilidad consulta la tabla común, usando el mismo predicado de solapamiento. Bloqueos compartidos de catálogo conservan horarios, estados y precios durante la creación; actualizaciones de citas/bloqueos usan bloqueo de fila para evitar transiciones incompatibles o efectos duplicados.
+
+### Extensión y permisos
+
+V4 ejecuta `CREATE EXTENSION IF NOT EXISTS btree_gist` **en la base conectada**, para la igualdad UUID en GiST. PostgreSQL distribuye btree_gist como extensión trusted: puede instalarla un usuario con CREATE sobre esa base, o puede preinstalarla el administrador de la base. No se alteran roles ni privilegios globales. Referencias oficiales: [extensiones adicionales](https://www.postgresql.org/docs/current/contrib.html) y [CREATE EXTENSION](https://www.postgresql.org/docs/current/sql-createextension.html).
+
+Si faltan archivos de extensión, el administrador del servidor debe instalar el paquete contrib correspondiente a su versión de PostgreSQL. Si faltan permisos, solicitar que un administrador se conecte **a la base destino** y ejecute:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+```
+
+Después se vuelve a ejecutar Flyway normalmente, sin editar migraciones ni usar clean o baseline. El usuario de la aplicación necesita acceso normal a sus tablas; el usuario que migra necesita permisos de DDL. Las pruebas usan exclusivamente barberia_auth_test y no modifican barberia_db.
+
+## Errores y pendientes
+
+400 para entrada inválida, motivo obligatorio ausente, fechas/horas mal formadas, tipos de servicio incorrectos, campos desconocidos o paginación inválida; 401 para autenticación inválida; 403 por rol insuficiente; 404 para cita/perfil ajeno o recurso no disponible; 409 para intervalo ocupado, fuera de atención o transición incompatible. Se mantiene `timestamp, status, code, message` sin detalles SQL.
+
+Pendientes: contadores de incidencias, advertencias y su canal, bloqueos comerciales, identificación/vinculación de invitados, reprogramación, inventario, ventas, cobros, pagos y reembolsos. Mercado Pago permanece elegido para una integración futura sin dependencias ni código en esta entrega. Cambiar horarios administrativos no reprograma citas existentes.

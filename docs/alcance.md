@@ -2,9 +2,9 @@
 
 ## Fuente de requisitos
 
-La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS, cuentas/autenticación JWT y los adjuntos posteriores de sucursales/catálogo/perfiles y disponibilidad/reserva de citas para clientes autenticados.
+La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS, cuentas/autenticación JWT y los adjuntos posteriores de catálogo/perfiles, reserva de citas y operación de agenda con atención inmediata y protección de intervalos solapados.
 
-Esta entrega añade disponibilidad diaria y creación/consulta de citas propias de clientes autenticados. Los demás requisitos describen el alcance previsto. Las decisiones pendientes se conservan abiertas, salvo el proveedor de pagos confirmado: Mercado Pago, cuya integración sigue pendiente.
+Esta entrega añade atención inmediata de invitados, agenda del personal, estados, cancelaciones y bloqueos individuales, con protección PostgreSQL de intervalos solapados. Contadores, advertencias y bloqueos comerciales quedan pendientes. Las demás decisiones abiertas se conservan; Mercado Pago está elegido, con integración pendiente.
 
 ## Objetivo
 
@@ -34,7 +34,7 @@ El flujo es controller → service → repository: contrato HTTP y validación d
 - Descanso inicial de Sucursal principal: 10:00 a 11:00.
 - Descanso inicial de Sucursal 2: 11:00 a 12:00.
 - Cada día tiene una apertura/cierre y un descanso opcional, contenido en el horario. Apertura anterior a cierre e inicio de descanso anterior a fin; un día cerrado no tiene horas. No se implementa un motor genérico de calendarios.
-- Las citas comienzan a horas exactas y cada una ocupa una hora completa.
+- Las reservas programadas comienzan a horas exactas. La atención presencial inmediata comienza al minuto del reloj del servidor, sin elegir inicio desde el request. Todas ocupan una hora completa.
 - Incluye un corte principal y complementos opcionales.
 - Los precios son iguales en ambas sucursales.
 - Terminar antes no libera automáticamente el bloque.
@@ -42,14 +42,16 @@ El flujo es controller → service → repository: contrato HTTP y validación d
 - El administrador puede bloquear horarios de un barbero.
 - El cliente debe iniciar sesión para reservar en línea.
 - Solo un administrador o barbero puede registrar una cita inmediata presencial para un invitado, siempre que exista disponibilidad.
-- El invitado aporta nombre y teléfono; no se crea una cuenta automáticamente. Las citas de invitados no se implementan en esta entrega.
+- El invitado aporta nombre y teléfono; no se crea una cuenta ni se vincula automáticamente por teléfono. BARBER registra atención inmediata solo para sí mismo en su sucursal; ADMIN para cualquier barbero disponible.
 - Las citas se cancelan; no se borran del historial.
 
 ## Cancelaciones e incidencias
 
+Las cancelaciones de citas confirmadas, las transiciones de atención y NO_SHOW están implementadas. Las siguientes reglas de contadores, advertencias, bloqueos comerciales y reactivación se conservan como requisitos pendientes: esta entrega no incrementa ni reinicia contadores.
+
 - Cliente: cancelación con al menos 60 minutos de anticipación, incluyendo exactamente 60 minutos.
-- Barbero y administrador: cancelación en cualquier momento, con motivo obligatorio y sin penalizar al cliente.
-- Barbero y administrador pueden marcar inasistencias.
+- Barbero sobre sus citas confirmadas y administrador sobre cualquiera confirmada: cancelación sin límite de anticipación, con motivo obligatorio y sin atribuirla al cliente. Conserva actor, fecha, motivo y origen.
+- Barbero y administrador pueden marcar inasistencias de citas confirmadas únicamente al finalizar su intervalo y sin haber iniciado atención.
 - Cancelaciones del cliente e inasistencias cuentan como incidencias consecutivas de citas.
 - Segunda incidencia: advertencia. Tercera: bloqueo.
 - Una asistencia completada reinicia el contador de citas.
@@ -123,17 +125,28 @@ El [README](../README.md) detalla variables, ejemplos, endpoints, inicio del pri
 
 El detalle de entidades, relaciones, transacciones, endpoints, permisos y ejemplos se encuentra en [catalogo.md](catalogo.md).
 
-## Etapa actual: disponibilidad y reservas propias
+## Disponibilidad y reservas propias implementadas
 
-La entrega actual incorpora el módulo `appointments`:
+La primera entrega del módulo `appointments` incorporó:
 
 - Disponibilidad autenticada por sucursal, perfil y fecha local; verifica pertenencia y cuenta/perfil/sucursal activos. Lee horarios semanales persistidos; excluye descansos, ocupación y comienzos pasados. Intervalos [inicio, fin), bloques completos de una hora y comienzos exactos, Clock inyectable.
 - Reserva exclusiva CLIENT; identidad del JWT, sucursal inferida del perfil. Un HAIRCUT activo obligatorio y complementos ADD_ON activos sin duplicados. DTO sin cliente, sucursal, estado ni importes elegibles.
 - Estado inicial CONFIRMED. Instantes TIMESTAMPTZ convertidos desde America/Mexico_City, nombres/precios históricos y total BigDecimal. No representa cobro ni ingreso.
-- Revalidación transaccional e índice único parcial PostgreSQL para impedir dos reservas confirmadas del mismo barbero/bloque. V3 conserva V1 y V2. La futura cancelación liberará el índice al cambiar el estado, conservando el historial mediante una nueva migración.
-- Listado paginado y detalle exclusivamente propios; cita ajena devuelve el mismo 404 que inexistente. Disponibilidad sin datos de ocupantes. Sin consultas administrativas ni agenda del barbero.
+- Revalidación transaccional y V3 con índice único por comienzo. V4 lo sustituye por exclusión de intervalos para incluir presenciales y bloqueos; las cancelaciones ya liberan ocupación conservando historial.
+- Listado paginado y detalle exclusivamente propios; cita ajena devuelve el mismo 404 que inexistente. Disponibilidad sin datos de ocupantes. Las rutas de personal de la entrega siguiente mantienen sus permisos separados.
 
 Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
+
+## Etapa actual: operación de agenda
+
+- Atención inmediata WALK_IN para invitado sin cuenta ni vinculación por teléfono. Inicio tomado del Clock del servidor al minuto, estado IN_PROGRESS, creador autenticado, precios históricos y duración de una hora. Mismas reglas de horario/descanso y disponibilidad que reservas.
+- Ejemplos confirmados: 14:25–15:25 no cabe si existe reserva a las 15:00; otra atención a las 15:10 se solapa; a las 15:25 no cabe una hora si existe reserva a las 16:00. Intervalos adyacentes sí se admiten.
+- BARBER consulta y opera sus citas; ADMIN cualquiera y ambas sucursales. Agenda paginada por fecha y estado, con nombre/contacto, servicios, horario y estado. CLIENT conserva solo sus citas. Sin exposición de credenciales.
+- CONFIRMED → IN_PROGRESS solo desde startsAt; IN_PROGRESS → COMPLETED incluso antes del final; CONFIRMED → NO_SHOW solo desde endsAt y sin inicio; CONFIRMED → CANCELLED según permisos. Estados finales no se cambian. Repetir una acción ya aplicada devuelve el resultado sin duplicar efectos ni sobrescribir auditoría.
+- Cancelación CLIENT con al menos 60 minutos exactos; personal sin límite de anticipación y con motivo obligatorio. Se conservan actor, fecha, motivo y origen CLIENT/STAFF. Sin reembolsos ni penalizaciones implementadas.
+- Bloqueos ADMIN con inicio anterior al fin, no pasado, motivo y auditoría; pueden empezar a minutos arbitrarios. Solapamientos se rechazan, sin desplazar ni cancelar citas. Cancelación conserva fila e historial.
+- V4 conserva V1/V2/V3, adapta reservas existentes y crea barber_blocks y agenda_occupations. Exclusión GiST por barbero y rango [inicio, fin), usando btree_gist en la base destino. Triggers mantienen fuente/ocupación atómicas; conflictos 23P01 devuelven 409. COMPLETED y NO_SHOW mantienen ocupación; CANCELLED la libera. No se modifican privilegios globales.
+- Sin contadores, advertencias, bloqueos comerciales, reprogramación, inventario, ventas ni pagos. Instalación de extensión, transiciones, rutas y ejemplos en [citas.md](citas.md).
 
 ## Etapas
 
@@ -143,18 +156,18 @@ Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
 4. Reportes.
 5. Pedidos, pagos en línea, recogidas y reembolsos.
 
-Estas son las etapas indicadas en la especificación. La primera está completada y la segunda ya incorpora cuentas, autenticación, sucursales, servicios, perfiles y reserva/consulta de citas propias. Agendas de administración/barbero, cancelaciones, reprogramación e incidencias siguen pendientes; documentar los demás requisitos no implica haberlos implementado.
+Estas son las etapas indicadas en la especificación. La primera está completada y la segunda incorpora cuentas, catálogo, reservas y operación de agenda. Reprogramación, contadores de incidencias, advertencias y bloqueos comerciales siguen pendientes; documentar otros requisitos no implica haberlos implementado.
 
 ## Fuera de esta tarea
 
-- Cancelaciones, reprogramación, inasistencias, invitados, agendas administrativas o de barbero y bloqueos individuales de horarios.
+- Reprogramación, contadores de incidencias, advertencias y vinculación/identificación de invitados.
 - Gestión genérica de usuarios/roles, traslados de barberos, bloqueos comerciales, recuperación de contraseña y verificación de correo.
 - Inventario, ventas y cobros.
 - Refresh tokens y revocación individual de access tokens.
 - Pagos e integraciones de pagos.
 - Docker, infraestructura y despliegue.
 - Carpetas vacías para posibles módulos futuros.
-- Merge de esta entrega de citas. El commit, push y apertura del PR fueron autorizados en la revisión final posterior a la implementación.
+- Merge de feature/agenda-operations. El commit, push y apertura del PR quedaron autorizados tras esta revisión final.
 
 ## Decisiones pendientes
 
@@ -166,7 +179,23 @@ Los siguientes puntos permanecen abiertos; no se adoptan valores predeterminados
 - Procedimiento de reembolsos presenciales.
 - Efecto de la reactivación administrativa sobre los contadores.
 
-## Verificación de disponibilidad y citas — 17 de octubre de 2026
+## Verificación de operación de agenda — 17 de octubre de 2026
+
+- PR #3 confirmado integrado como `2dd681b`; main limpia y sincronizada con origin/main. Rama creada: `feature/agenda-operations`. La implementación se entregó inicialmente sin commit, push, merge ni PR; después se autorizó su publicación para revisión, sin merge.
+- Compilación inicial con Java 25 y Maven Wrapper correcta; después `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests clean verify`: **BUILD SUCCESS**, **15 pruebas unitarias y 79 de integración** sin fallos, errores ni omisiones.
+- 23 integraciones nuevas de agenda y las 56 previas. Cubren permisos, invitados sin cuenta/vinculación, reglas temporales, precio histórico, estados y repetición, cancelación 60/59 minutos, auditoría y liberación/conservación del intervalo.
+- Tres carreras coordinadas sin sleeps, con peticiones MockMvc y transacciones independientes: presencial/presencial con inicios distintos, reserva/presencial y bloqueo/reserva. Cada una produjo 201/409 y una sola operación persistida. También se comprobó cancelación concurrente sin duplicar ni sobrescribir auditoría.
+- PostgreSQL 18.1 exclusivamente en barberia_auth_test: V4 y btree_gist aplicados, históricos adaptados y Hibernate validate correcto. V1/V2/V3 intactas; no se limpia ni migra barberia_db.
+- La suite de reservas arrancó un servidor HTTP real en el puerto 51307 y mantuvo su prueba concurrente. No hubo una prueba manual adicional. El proceso de verificación terminó. Se reutilizó TEMP/TMP corto solo para la sesión, sin configuración global ni rutas personales en código.
+- Revisión final: git diff --check correcto, V1/V2/V3 sin cambios y 103 archivos candidatos sin coincidencias de secretos del entorno/tokens reales ni temporales. Consulta de solo lectura a barberia_db: cero tablas de usuario. AGENTS solo actualiza el alcance autorizado, conservando sus demás restricciones.
+
+## Revisión final de operación de agenda para PR
+
+- Revisados el diff completo, rutas y DTOs, permisos CLIENT/BARBER/ADMIN, inicio presencial desde Clock, intervalos de una hora, adyacencia, estados e idempotencia, cancelaciones, auditoría y bloqueos. Sin fallos funcionales encontrados; no hubo cambios de código o configuración después de la verificación de 15 pruebas unitarias y 79 de integración.
+- V4 usa una extensión explícita y local a la base, ocupaciones activas con exclusión GiST y triggers atómicos. V1/V2/V3 intactas. Se conservaron las restricciones de AGENTS y se revisaron archivos versionables sin secretos, tokens reales, rutas personales ni temporales.
+- Esta revisión solo actualizó el estado de autorización de la entrega; la verificación exitosa anterior se reutiliza. La rama se publica para revisión sin merge.
+
+## Historial: verificación de disponibilidad y citas — 17 de octubre de 2026
 
 - Se partió de main limpia y sincronizada, commit `64ccd65`, y se creó `feature/appointment-booking`. La implementación se entregó inicialmente sin commit, push, merge ni PR; posteriormente se autorizó su publicación para revisión, sin merge.
 - Compilación inicial `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -DskipTests compile`: BUILD SUCCESS. Esta comprobación no se presenta como pruebas ejecutadas.
