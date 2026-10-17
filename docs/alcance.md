@@ -2,9 +2,9 @@
 
 ## Fuente de requisitos
 
-La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base y su actualización a Java 25 LTS.
+La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS y la tarea confirmada de cuentas/autenticación JWT.
 
-Esta entrega solo actualiza documentación. Los requisitos siguientes describen el alcance previsto, no funcionalidades ya implementadas. Las decisiones pendientes se conservan abiertas, sin implementar supuestos.
+Esta entrega implementa exclusivamente cuentas y autenticación. Los demás requisitos describen el alcance previsto. Las decisiones pendientes se conservan abiertas, sin implementar supuestos.
 
 ## Objetivo
 
@@ -12,9 +12,9 @@ API REST para una barbería con dos sucursales. Busca reducir esperas mediante c
 
 ## Base técnica
 
-Java 25 LTS sin características preview, Spring Boot 3.5.16, PostgreSQL y Maven Wrapper. Monolito organizado por módulos de negocio, con capas controller, service y repository, además de DTOs y entidades. Seguridad JWT y pruebas se incorporarán en sus etapas.
+Java 25 LTS sin características preview, Spring Boot 3.5.16, PostgreSQL y Maven Wrapper. Monolito organizado por módulos de negocio, con capas controller, service y repository, además de DTOs y entidades. Cuentas y JWT incorporan Spring Security, Nimbus JOSE + JWT, BCrypt y Flyway 11.20.3 con soporte PostgreSQL. Hibernate valida el esquema con `ddl-auto=validate` después de las migraciones.
 
-El flujo será controller → service → repository: contrato HTTP y validación de entrada, casos de uso y reglas de negocio, y acceso a datos, respectivamente. Los DTOs, entidades y módulos se añadirán cuando se implemente la funcionalidad correspondiente; esta tarea no los crea.
+El flujo es controller → service → repository: contrato HTTP y validación de entrada, casos de uso y reglas de negocio, y acceso a datos, respectivamente. Se han creado los módulos `accounts` y `auth`, y errores HTTP compartidos. No se anticipan módulos ni entidades de otros casos de uso.
 
 ## Usuarios y permisos
 
@@ -22,6 +22,7 @@ El flujo será controller → service → repository: contrato HTTP y validació
 - Barbero: gestiona su propia agenda y registra cobros y ventas presenciales en su sucursal.
 - Administrador: gestiona ambas sucursales, usuarios, agendas, bloqueos, catálogos, inventario y reportes.
 - El dueño es administrador y también tiene perfil de barbero.
+- Una cuenta admite varios roles: `CLIENT`, `BARBER` y `ADMIN`; el dueño podrá tener `ADMIN` y `BARBER`. El perfil de barbero se implementará posteriormente.
 - Un barbero pertenece a una sola sucursal.
 - Hay inicialmente tres barberos por sucursal, incluido el dueño. Esta cantidad no debe ser un límite fijo en el código.
 
@@ -31,13 +32,15 @@ El flujo será controller → service → repository: contrato HTTP y validació
 - Zona horaria: America/Mexico_City.
 - Descanso sucursal 1: 10:00 a 11:00.
 - Descanso sucursal 2: 11:00 a 12:00.
-- Cada cita ocupa una hora completa.
+- Las citas comienzan a horas exactas y cada una ocupa una hora completa.
 - Incluye un corte principal y complementos opcionales.
 - Los precios son iguales en ambas sucursales.
 - Terminar antes no libera automáticamente el bloque.
 - No puede haber empalmes con citas, descansos o bloqueos, incluso ante solicitudes simultáneas.
 - El administrador puede bloquear horarios de un barbero.
-- El personal puede registrar citas para clientes sin cuenta, siempre que exista disponibilidad.
+- El cliente debe iniciar sesión para reservar en línea.
+- Solo un administrador o barbero puede registrar una cita inmediata presencial para un invitado, siempre que exista disponibilidad.
+- El invitado aporta nombre y teléfono; no se crea una cuenta automáticamente. Citas e invitados no se implementan en esta entrega.
 - Las citas se cancelan; no se borran del historial.
 
 ## Cancelaciones e incidencias
@@ -51,6 +54,7 @@ El flujo será controller → service → repository: contrato HTTP y validació
 - Los pedidos tienen un contador independiente: cancelación del cliente o vencimiento sin recogida suma; recogida completada reinicia.
 - Llegar a tres en cualquiera bloquea nuevas citas y compras.
 - El bloqueo no cancela compromisos existentes ni impide recoger pedidos pagados o recibir reembolsos.
+- Un bloqueo comercial para reservar o comprar no impide iniciar sesión ni consultar compromisos existentes. Es independiente del estado activo de la cuenta; los bloqueos comerciales todavía no están implementados.
 - El administrador puede reactivar al cliente.
 - Cancelaciones causadas por el negocio no suman incidencias.
 - Las bajas de usuarios conservan su historial.
@@ -85,22 +89,24 @@ El flujo será controller → service → repository: contrato HTTP y validació
 - Distinguir cobros, reembolsos e ingresos netos.
 - No denominarlos ganancias: no registraremos gastos.
 
-## Etapa actual: base del proyecto
+## Etapa actual: cuentas y autenticación JWT
 
-| Requisito confirmado | Decisión |
+| Requisito confirmado | Implementación |
 | --- | --- |
-| Inspeccionar y conservar el trabajo existente | La carpeta estaba vacía y no era un repositorio Git; no había trabajo previo que modificar. |
-| Java 25 LTS y Maven Wrapper | Java 25 sin preview, Maven 3.9.11 y Wrapper 3.3.4. |
-| Conservar Spring Boot compatible con Java 25 | Spring Boot 3.5.16. |
-| Dependencias iniciales | Web, Data JPA, Bean Validation, PostgreSQL y starter de pruebas. |
-| Nombre provisional | `barberia-api`, paquete raíz provisional `com.barberia.api`. |
-| Monolito por módulos de negocio | Un artefacto Maven; crear módulos conforme se implementen requisitos confirmados. |
-| Separación de responsabilidades | controller → service → repository, documentada en README y AGENTS. |
-| Configuración externa de PostgreSQL | `DB_URL`, `DB_USERNAME` y `DB_PASSWORD`, sin credenciales en archivos. |
-| Sin actualización automática del esquema | `ddl-auto=none` e inicialización SQL desactivada. |
-| Documentación y archivos locales | README, este alcance, AGENTS y `.gitignore`. |
-| Verificar con Maven Wrapper | Compilar y empaquetar; informar por separado el estado del arranque con PostgreSQL. |
-| Sin operaciones de publicación Git | No hacer commit, push ni merge. |
+| Registro público | `POST /api/v1/auth/register`, nombre, teléfono, correo y contraseña; 201 con datos públicos y únicamente `CLIENT`. No admite campos de roles o privilegios. |
+| Correo | Normalizado a minúsculas, sin espacios exteriores, único mediante restricción PostgreSQL; duplicados devuelven 409 incluso en concurrencia. |
+| Login | `POST /api/v1/auth/login`; BCrypt, cuenta activa y correo/contraseña válidos. Error genérico 401 ante credenciales incorrectas o cuenta inactiva. |
+| Cuenta autenticada | `GET /api/v1/users/me`; DTO de datos públicos y roles actuales, sin contraseña ni hash. |
+| JWT | Bearer stateless; Nimbus con Spring Security, HS256, validación de firma, expiración, emisor, audiencia e identidad UUID. |
+| Variables JWT | `JWT_SECRET_BASE64` (mínimo 32 bytes aleatorios codificados en Base64) y `JWT_EXPIRATION_SECONDS` (60–3600); sin secreto predeterminado. |
+| Permisos y desactivación | Identidad del JWT validado; estado y roles consultados en PostgreSQL en cada petición autenticada. Los roles no se toman del cliente ni del token. |
+| Errores | Formato JSON común para 400, 401, 403 y 409, sin datos internos ni credenciales. |
+| Persistencia | Migración V1 para `accounts`, `roles` y `account_roles`. Flyway con limpieza deshabilitada y sin baseline automático; Hibernate `validate`. |
+| Primer administrador | Bootstrap explícito desactivado por defecto; datos mediante `BOOTSTRAP_ADMIN_*`. Crea `ADMIN` si no existe; nunca cambia la contraseña, el estado ni los privilegios de una cuenta existente. |
+| Vida de tokens | No hay refresh ni revocación individual; vigencia limitada. Desactivar una cuenta rechaza sus tokens; rotar la clave invalida todos. |
+| Separación comercial | Cuenta activa es independiente de futuros bloqueos de reservas/compras. No se implementan esos bloqueos. |
+
+El [README](../README.md) detalla variables, ejemplos, endpoints, inicio del primer administrador y deshabilitación posterior del mecanismo. El bootstrap solo asigna `ADMIN`; la gestión posterior de roles y los perfiles de barbero están pendientes.
 
 ## Etapas
 
@@ -110,43 +116,42 @@ El flujo será controller → service → repository: contrato HTTP y validació
 4. Reportes.
 5. Pedidos, pagos en línea, recogidas y reembolsos.
 
-Estas son las etapas indicadas en la especificación. El estado actual corresponde a la primera; documentar las siguientes no implica haberlas implementado. Las migraciones se incorporarán al crear el primer esquema, y las pruebas se añadirán en sus etapas correspondientes.
+Estas son las etapas indicadas en la especificación. La primera está completada y la segunda comienza con cuentas y autenticación. Sucursales, servicios, agendas y citas siguen pendientes. Ya existen migraciones y pruebas para este primer caso de uso; documentar los demás requisitos no implica haberlos implementado.
 
 ## Fuera de esta tarea
 
-- Entidades, CRUD, endpoints o funcionalidades de negocio.
-- Autenticación, autorización y Spring Security.
+- Citas, invitados, agendas, sucursales, servicios y perfiles de barbero.
+- Gestión administrativa de usuarios/roles, bloqueos comerciales, recuperación de contraseña y verificación de correo.
+- Refresh tokens y revocación individual de access tokens.
 - Pagos e integraciones de pagos.
 - Docker, infraestructura y despliegue.
 - Carpetas vacías para posibles módulos futuros.
-- Creación del primer esquema o adopción anticipada de una herramienta de migraciones.
-- Commit, push y merge.
+- Merge del PR. El commit, push y apertura del primer PR se autorizaron en la revisión final posterior a la implementación.
 
 ## Decisiones pendientes
 
 Los siguientes puntos permanecen abiertos; no se adoptan valores predeterminados ni soluciones implícitas:
 
-- Horas exactas o inicios de citas en horarios intermedios.
-- Identificación de clientes sin cuenta y control de duplicados.
+- Control de duplicados de invitados (ya se confirmó identificación mediante nombre y teléfono, sin cuenta automática).
 - Canal de las advertencias.
 - Vencimientos de recogida fuera del horario de atención.
 - Proveedor de pagos.
 - Procedimiento de reembolsos presenciales.
 - Efecto de la reactivación administrativa sobre los contadores.
 
-## Pendientes técnicos de la base
+## Verificación de cuentas y JWT — 17 de octubre de 2026
 
-- Mantener disponible la conexión PostgreSQL para futuras verificaciones; el arranque local ya se comprobó con PostgreSQL 18.1 y `barberia_db`.
-- Incorporar las pruebas de negocio e integración al implementar el primer caso de uso. La base solo incluye las dependencias de pruebas.
-- El repositorio Git local se inicializó en la rama `main` por solicitud del usuario. No se ha creado un remoto.
+- Antes de implementar se comprobó `main` limpia y sincronizada con `origin/main`; se creó `feature/auth-users`. La implementación se entregó inicialmente sin commit, push, merge ni PR; la publicación se autorizó después, para su revisión sin merge.
+- `mvnw.cmd -B -ntp -Dmaven.repo.local=.local/maven-repository -Ppostgres-tests clean verify`: **BUILD SUCCESS** con Java 25.0.1, Maven 3.9.11 y Spring Boot 3.5.16.
+- **8 pruebas unitarias y 16 de integración ejecutadas**, todas correctas. Cubren registro, duplicados concurrentes, normalización y restricciones PostgreSQL, rechazo de privilegios públicos, login, JWT válido/ausente/expirado/manipulado, cuentas inactivas, varios roles y bootstrap sin elevación de cuentas existentes.
+- Se creó y utilizó exclusivamente `barberia_auth_test` para las migraciones y los datos de autenticación. No se sustituyó PostgreSQL por H2 ni se limpiaron esquemas. Las pruebas conservan sus datos aleatorios en esa base. No se aplicó V1 en `barberia_db`.
+- Una consulta posterior de solo lectura confirmó que `barberia_db` conserva cero tablas de usuario. La revisión de archivos no encontró secretos del entorno ni patrones de claves/tokens; `git diff --check` pasó.
+- La primera ejecución detectó un error en el tratamiento de duplicados simultáneos; se corrigió usando SQLSTATE 23505, independiente del idioma de PostgreSQL. La ejecución completa posterior pasó. Se actualizó Flyway de 11.7.2 a 11.20.3 por compatibilidad con PostgreSQL 18.
+- **Comprobación HTTP manual**: dos arranques reales mediante Maven Wrapper con Java 25, conexión PostgreSQL y puertos efectivos 63788 y 61718. Registro 201, login y perfil 200, duplicado 409, campo de roles 400, perfil sin token 401 y ruta denegada 403.
+- El bootstrap habilitado creó un administrador. Un segundo arranque con otra contraseña de inicialización conservó la contraseña original y el rol. Se detuvieron únicamente los procesos iniciados para verificar.
+- Advertencias no bloqueantes de Guice/Maven (`sun.misc.Unsafe`) y carga dinámica del agente de Mockito en Java 25. No se ocultaron mediante opciones de JVM.
 
-## Consistencia de la documentación
-
-La nota de especificación no disponible y la secuencia provisional de etapas quedaron sustituidas por la especificación recibida y sus cinco etapas. No se identificaron contradicciones directas entre las reglas proporcionadas. Las siete decisiones pendientes se conservan sin resolver.
-
-La exclusión de seguridad, funcionalidades y pagos corresponde a esta tarea documental; su inclusión en etapas posteriores forma parte del alcance del producto. Los registros de compilación siguientes pertenecen a entregas anteriores y no acreditan nuevas verificaciones en esta actualización documental.
-
-## Verificación posterior: PostgreSQL y arranque real
+## Historial: PostgreSQL y arranque de la base inicial
 
 - Se comprobó que `barberia_db` no existía y se creó por solicitud del usuario usando `DB_USERNAME` y `DB_PASSWORD` del entorno. No se imprimió la contraseña ni se modificaron otras bases.
 - Se confirmó la conexión a PostgreSQL 18.1 y el arranque completo con Maven Wrapper 3.9.11, Java 25.0.1 y Spring Boot 3.5.16.

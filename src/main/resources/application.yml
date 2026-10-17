@@ -8,7 +8,29 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: none
+      ddl-auto: validate
+  flyway:
+    clean-disabled: true
+    baseline-on-migrate: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
   sql:
     init:
       mode: never
+
+app:
+  jwt:
+    secret-base64: ${JWT_SECRET_BASE64}
+    expiration-seconds: ${JWT_EXPIRATION_SECONDS}
+  bootstrap-admin:
+    enabled: ${BOOTSTRAP_ADMIN_ENABLED:false}
+    name: ${BOOTSTRAP_ADMIN_NAME:}
+    phone: ${BOOTSTRAP_ADMIN_PHONE:}
+    email: ${BOOTSTRAP_ADMIN_EMAIL:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+
+# Los errores SQL pueden contener la fila rechazada, incluido el hash.
+logging:
+  level:
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "OFF"
