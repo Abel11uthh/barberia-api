@@ -4,7 +4,7 @@
 
 La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS, cuentas/autenticación JWT y los adjuntos posteriores de catálogo/perfiles, reserva de citas, operación de agenda e incidencias consecutivas de citas.
 
-Esta entrega añade incidencias consecutivas de citas, advertencias JSON, bloqueo de nuevas reservas y reactivación administrativa sobre la agenda ya implementada. Incidencias de pedidos, pagos y reembolsos siguen pendientes. Las demás decisiones abiertas se conservan; Mercado Pago está elegido, con integración pendiente.
+Esta entrega añade catálogo de productos para venta e inventario auditable por sucursal. Ventas, pedidos, pagos y reembolsos siguen pendientes. Las demás decisiones abiertas se conservan; Mercado Pago está elegido, con integración pendiente.
 
 ## Objetivo
 
@@ -146,14 +146,21 @@ Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
 - Cancelación CLIENT con al menos 60 minutos exactos; personal sin límite de anticipación y con motivo obligatorio. Se conservan actor, fecha, motivo y origen CLIENT/STAFF. La incidencia de una cancelación CLIENT se aplica en V5; los reembolsos siguen pendientes.
 - Bloqueos ADMIN con inicio anterior al fin, no pasado, motivo y auditoría; pueden empezar a minutos arbitrarios. Solapamientos se rechazan, sin desplazar ni cancelar citas. Cancelación conserva fila e historial.
 - V4 conserva V1/V2/V3, adapta reservas existentes y crea barber_blocks y agenda_occupations. Exclusión GiST por barbero y rango [inicio, fin), usando btree_gist en la base destino. Triggers mantienen fuente/ocupación atómicas; conflictos 23P01 y víctimas 40P01 de inserciones simultáneas devuelven 409. COMPLETED y NO_SHOW mantienen ocupación; CANCELLED la libera. No se modifican privilegios globales.
-- Instalación de extensión, transiciones, rutas y ejemplos en [citas.md](citas.md). Sin reprogramación, inventario, ventas ni pagos.
+- Instalación de extensión, transiciones, rutas y ejemplos en [citas.md](citas.md). Sin reprogramación, ventas ni pagos.
 
 ## Incidencias de citas implementadas
 
 - V5 conserva V1–V4 y añade contador consecutivo por cuenta, bloqueo comercial separado de `active` e historial de eventos por cita y actor. Cancelación CLIENT y NO_SHOW suman; cancelación del personal e invitados no penalizan. COMPLETED reinicia el contador, sin levantar un bloqueo ya aplicado.
 - La segunda incidencia consecutiva produce advertencia JSON; la tercera bloquea nuevas reservas. Se mantiene login y la consulta/cancelación de citas existentes. La comprobación comercial es central para futuras compras, aún no implementadas.
 - ADMIN reactiva con motivo obligatorio, reinicia el contador y conserva historial. Se ordena por confirmación de la transición válida, no por inicio de cita. Una inasistencia marcada después de la ventana se rechaza sin alterar la racha. PostgreSQL serializa los eventos por cuenta con bloqueo de fila y secuencia; repetir una transición no duplica el evento.
-- Endpoints, respuestas y ejemplo lunes sin resultado → martes COMPLETED → intento tardío el miércoles en [citas.md](citas.md). El contador de pedidos, reembolsos, pagos, inventario y ventas siguen pendientes.
+- Endpoints, respuestas y ejemplo lunes sin resultado → martes COMPLETED → intento tardío el miércoles en [citas.md](citas.md). El contador de pedidos, reembolsos, pagos y ventas siguen pendientes.
+
+## Productos e inventario implementados
+
+- V6 conserva V1–V5 y añade productos para venta, existencias por producto y sucursal e historial auditable de entradas y ajustes. No incluye materiales de trabajo ni productos o precios iniciales. El SKU se normaliza a mayúsculas y PostgreSQL protege su unicidad; el precio es positivo y tiene dos decimales.
+- ADMIN crea, actualiza y desactiva productos, registra entradas positivas y ajustes firmados con motivo, actor, sucursal e instante, y consulta movimientos. CLIENT busca productos activos y existencias de sucursales activas, incluido cero; BARBER ve solo su sucursal. Las consultas son paginadas, con filtros y ordenaciones controlados.
+- La primera entrada crea la fila de stock. El stock por sucursal nunca puede ser negativo. Un bloqueo de fila del producto serializa las operaciones concurrentes incluso al crear la primera fila; stock y movimiento son una sola transacción. Desactivar producto o sucursal conserva el historial e impide nuevas operaciones de stock.
+- El total general se calcula desde las existencias por sucursal, sin un segundo total persistido. Las futuras ventas guardarán su propio precio aplicado. Rutas y ejemplos en [productos.md](productos.md). Aún no hay ventas, reservas de stock, pedidos ni pagos.
 
 ## Etapas
 
@@ -163,18 +170,18 @@ Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
 4. Reportes.
 5. Pedidos, pagos en línea, recogidas y reembolsos.
 
-Estas son las etapas indicadas en la especificación. La primera está completada y la segunda incorpora cuentas, catálogo, reservas, operación de agenda e incidencias de citas. Reprogramación e incidencias de pedidos siguen pendientes; documentar otros requisitos no implica haberlos implementado.
+Estas son las etapas indicadas en la especificación. La primera está completada; la segunda incorpora cuentas, catálogo de servicios, reservas, operación de agenda e incidencias de citas. De la tercera se implementan ahora productos e inventario; ventas y cobros siguen pendientes. Reprogramación e incidencias de pedidos también permanecen pendientes; documentar otros requisitos no implica haberlos implementado.
 
 ## Fuera de esta tarea
 
 - Reprogramación, incidencias de pedidos y vinculación/identificación de invitados.
 - Gestión genérica de usuarios/roles, traslados de barberos, recuperación de contraseña y verificación de correo.
-- Inventario, ventas y cobros.
+- Ventas, reservas de stock para compras en línea y cobros.
 - Refresh tokens y revocación individual de access tokens.
 - Pagos e integraciones de pagos.
 - Docker, infraestructura y despliegue.
 - Carpetas vacías para posibles módulos futuros.
-- Merge de feature/appointment-incidents.
+- Merge de feature/product-inventory.
 
 ## Decisiones pendientes
 
@@ -183,6 +190,21 @@ Los siguientes puntos permanecen abiertos; no se adoptan valores predeterminados
 - Control de duplicados de invitados (ya se confirmó identificación mediante nombre y teléfono, sin cuenta automática).
 - Vencimientos de recogida fuera del horario de atención.
 - Procedimiento de reembolsos presenciales.
+
+## Verificación de productos e inventario — 17 de octubre de 2026
+
+- PR #5 confirmado integrado como `c2d46d1`; main actualizada mediante `git pull --ff-only`, sin cambios locales, y rama `feature/product-inventory` creada desde ella.
+- Maven Wrapper con Java 25.0.1: compilación/empaquetado correctos y ejecución final completa **BUILD SUCCESS**, **15 unitarias y 97 integraciones**, sin fallos, errores ni omisiones. Se ejecutaron 9 pruebas nuevas de inventario y todas las regresiones de cuentas, catálogo y citas.
+- Las pruebas detectaron una respuesta 500 al actualizar con un SKU duplicado; se corrigió la consulta previa a la modificación de la entidad y se verificó el 409. Se rechazan cantidades fraccionarias sin truncarlas y la búsqueda trata literalmente los caracteres del SKU.
+- Una ejecución fue interrumpida por falta de memoria nativa del JDK. La final usó límites de memoria y un proceso por clase solo en el comando, sin configuración global ni rutas personales versionadas; ver el comando del README. La suite de reservas arrancó un servidor HTTP real; no se hizo un arranque manual adicional.
+- Solo se utilizó `barberia_auth_test`; V6 aplicada y esquema validado, V1–V5 intactas. No se limpió ni migró `barberia_db`. Ventas, cobros, pedidos, reservas de stock, Mercado Pago y reembolsos siguen pendientes. La implementación se entregó inicialmente sin commit, push, merge ni PR; su publicación fue autorizada posteriormente para revisión sin merge.
+
+## Revisión final de productos e inventario para PR
+
+- Revisado el diff completo respecto de main: SKU, precisión decimal, aislamiento por sucursal, stock cero, auditoría, permisos, filtros, transacciones y concurrencia. Corregido el desbordamiento del total sumado con `long`; ahora se calcula con precisión entera sin límite de ese tipo y se devuelve como número JSON.
+- Añadidas dos pruebas: creación concurrente del mismo SKU normalizado con resultados 201/409 y una sola fila; total superior al rango de `long` y rechazo directo de stock negativo por PostgreSQL.
+- Verificación afectada con Java 25 y Maven Wrapper: **BUILD SUCCESS**, compilación/empaquetado, 15 unitarias y 11 integraciones de productos. Se reutilizan las 88 integraciones previas de cuentas, catálogo y citas; no se repitió la suite conjunta de 99 integraciones.
+- V1–V5 intactas y pruebas exclusivamente en `barberia_auth_test`. Opciones de memoria temporales documentadas, sin rutas personales ni configuración global añadida. Archivos candidatos revisados sin secretos o temporales; AGENTS conserva sus restricciones. Commit, push y PR autorizados en esta revisión, sin merge.
 
 ## Verificación de incidencias de citas — 17 de octubre de 2026
 
