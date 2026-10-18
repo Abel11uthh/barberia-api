@@ -1,8 +1,8 @@
 # Productos e inventario por sucursal
 
-Solo se gestionan productos destinados a venta. Los materiales consumidos por barberos, ventas, pedidos, reservas de stock y cobros no forman parte de esta entrega.
+Solo se gestionan productos destinados a venta. Se incorporaron ventas presenciales con movimientos vinculados; contratos en [operacion-presencial.md](operacion-presencial.md). Los materiales consumidos por barberos, pedidos, reservas de stock en línea y pagos en línea siguen fuera del alcance.
 
-Cada producto tiene SKU único normalizado a mayúsculas y sin espacios exteriores, nombre, descripción opcional, precio positivo en MXN con dos decimales y estado activo. El SKU admite letras A–Z, dígitos, punto, guion y guion bajo; empieza con letra o dígito. Cambiar el precio modifica el catálogo actual: una venta futura deberá guardar su **propio precio aplicado**, sin depender del catálogo posterior. No se crean productos iniciales.
+Cada producto tiene SKU único normalizado a mayúsculas y sin espacios exteriores, nombre, descripción opcional, precio positivo en MXN con dos decimales y estado activo. El SKU admite letras A–Z, dígitos, punto, guion y guion bajo; empieza con letra o dígito. Cambiar el precio modifica el catálogo actual: cada venta presencial guarda su **propio precio aplicado**, sin depender del catálogo posterior. No se crean productos iniciales.
 
 | Ruta | Permiso | Operación |
 | --- | --- | --- |
@@ -40,3 +40,5 @@ La respuesta del movimiento muestra `kind` (`ENTRY` o `ADJUSTMENT`), `delta`, `q
 PostgreSQL exige SKU único y normalizado, precio positivo, una sola fila de stock por producto–sucursal, stock no negativo y movimientos con antes/después coherentes. El servicio bloquea la fila del producto antes de crear o actualizar stock, de modo que entradas y ajustes concurrentes no pierden unidades, ni siquiera en la primera operación sin fila de existencias. Stock y movimiento se confirman o revierten juntos. No se aceptan nuevas operaciones de stock en sucursales o productos inactivos; el historial previo se conserva.
 
 Errores JSON: 400 para datos, cantidad, filtro o ordenación inválidos; 403 para rol insuficiente; 404 para producto inexistente/no visible; 409 para SKU duplicado, stock insuficiente u operación nueva sobre producto/sucursal inactivos. Una cuenta sin autenticar recibe 401.
+
+Desde V7, los movimientos de venta son `SALE`, con delta negativo y `saleId` obligatorio. Se crean únicamente al confirmar una venta, no mediante el endpoint de ajustes. Las respuestas administrativas del historial incluyen ese vínculo; ENTRY y ADJUSTMENT conservan `saleId=null`. Solo las ventas generan ingresos en los reportes.

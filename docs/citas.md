@@ -123,6 +123,10 @@ V5 añade columnas a `accounts` y la tabla `appointment_client_events`. Una secu
 
 Una cita CONFIRMED después de `endsAt + 15 minutos` no se convierte automáticamente en NO_SHOW. `POST .../no-show` devuelve 409 con un mensaje de ventana vencida y no altera contador ni ocupación. Su consulta de personal muestra `requiresAdministrativeReview=true`; no se incorporó una transición tardía o una penalización administrativa alternativa. A las 15:00 para una cita 14:00–15:00 se admite NO_SHOW; a las 15:15 aún se admite; a las 15:15:01 se rechaza.
 
+## Cobro presencial de una cita completada
+
+Completar no cobra automáticamente. BARBER propietario o ADMIN registran el pago ya recibido con `POST /api/v1/staff/appointments/{id}/charge` y `{"method":"CASH"}` o CARD. Solo COMPLETED y sin cobro previo: segunda petición 409. Usa total histórico y fecha real de pago; nunca precios actuales ni fecha de reserva. CLIENT consulta `GET /api/v1/appointments/{id}/payment` solo de sus citas, sin actor ni información administrativa. Permisos, auditoría y concurrencia en [operacion-presencial.md](operacion-presencial.md).
+
 ## Bloqueos individuales
 
 ```json
@@ -175,4 +179,4 @@ Después se vuelve a ejecutar Flyway normalmente, sin editar migraciones ni usar
 
 400 para entrada inválida, motivo obligatorio ausente, fechas/horas mal formadas, tipos de servicio incorrectos, campos desconocidos o paginación inválida; 401 para autenticación inválida; 403 por rol insuficiente; 404 para cita/perfil ajeno o recurso no disponible; 409 para intervalo ocupado, fuera de atención o transición incompatible. Se mantiene `timestamp, status, code, message` sin detalles SQL.
 
-Pendientes: incidencias y contador independiente de pedidos, identificación/vinculación de invitados, reprogramación, inventario, ventas, cobros, pagos y reembolsos. Mercado Pago permanece elegido para una integración futura sin dependencias ni código en esta entrega. Cambiar horarios administrativos no reprograma citas existentes.
+Pendientes: incidencias y contador independiente de pedidos, identificación/vinculación de invitados, reprogramación, compras/pagos en línea, reembolsos y devoluciones. Inventario, ventas y cobros presenciales están implementados y documentados por separado. Mercado Pago permanece elegido para una integración futura sin dependencias ni código en esta entrega. Cambiar horarios administrativos no reprograma citas existentes.
