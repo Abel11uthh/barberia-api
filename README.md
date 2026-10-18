@@ -1,6 +1,6 @@
 # barberia-api
 
-API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas/JWT, catálogo, reservas, operación de agenda e incidencias consecutivas de citas con advertencia, bloqueo comercial y reactivación administrativa**. Incidencias de pedidos, vinculación de invitados, reprogramación, inventario, ventas, pagos y reembolsos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos y ejemplos: [catálogo](docs/catalogo.md) y [citas](docs/citas.md). Mercado Pago será el proveedor de pagos futuro; todavía no hay integración.
+API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas/JWT, catálogo de servicios, reservas, operación de agenda, incidencias de citas, productos para venta e inventario por sucursal**. Incidencias de pedidos, vinculación de invitados, reprogramación, ventas, pedidos, pagos y reembolsos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos y ejemplos: [catálogo](docs/catalogo.md), [citas](docs/citas.md) y [productos](docs/productos.md). Mercado Pago será el proveedor de pagos futuro; todavía no hay integración.
 
 ## Tecnologías y decisiones
 
@@ -75,7 +75,7 @@ El ejemplo no imprime ni guarda secretos. En un entorno persistente, suministrar
 
 Flyway aplica `V1__create_accounts_and_roles.sql`: cuentas, catálogo de roles, relación de varios roles y restricciones de correo único y normalizado. Después, Hibernate comprueba las entidades con `ddl-auto=validate`. La inicialización SQL está desactivada, `clean-disabled=true` y `baseline-on-migrate=false`. No se borran esquemas ni se adopta automáticamente un esquema previo sin historial de migraciones; si Flyway detecta ese caso, revisar la base antes de continuar. No usar `ddl-auto=update` ni editar una migración ya aplicada: añadir una nueva versión.
 
-V2 (`V2__business_catalog.sql`) añade sucursales, horarios, servicios y perfiles, con los datos iniciales acordados. V3 añade citas y precios históricos. V4 (`V4__agenda_operations.sql`) adapta citas existentes, incorpora estados, invitados, auditoría, bloqueos y una tabla común de ocupaciones con exclusión PostgreSQL contra cualquier solapamiento. V5 añade contador de incidencias de citas, bloqueo comercial e historial ordenado de eventos; conserva V1–V4 intactas. Una base nueva recibe las cinco migraciones.
+V2 (`V2__business_catalog.sql`) añade sucursales, horarios, servicios y perfiles, con los datos iniciales acordados. V3 añade citas y precios históricos. V4 (`V4__agenda_operations.sql`) adapta citas existentes, incorpora estados, invitados, auditoría, bloqueos y una tabla común de ocupaciones con exclusión PostgreSQL contra cualquier solapamiento. V5 añade contador de incidencias de citas, bloqueo comercial e historial ordenado de eventos. V6 añade productos, existencias por sucursal e historial de movimientos, sin productos ni precios iniciales. V1–V5 permanecen intactas.
 
 V4 necesita `btree_gist`: la instala en la base conectada si el usuario de migración tiene permisos; alternativamente puede preinstalarla su administrador. No cambia privilegios globales. Consultar [instalación, permisos y garantía de concurrencia](docs/citas.md#extensión-y-permisos) antes de migrar. La nueva protección cubre intervalos distintos que se solapan, no solo comienzos iguales.
 
@@ -167,6 +167,10 @@ Remove-Item Env:BOOTSTRAP_ADMIN_NAME, Env:BOOTSTRAP_ADMIN_PHONE, Env:BOOTSTRAP_A
 
 Si esas variables se definieron también en la configuración persistente del IDE o del sistema, retirarlas allí. El bootstrap crea únicamente `ADMIN`. Después, una operación administrativa de asignación de perfil permite añadir `BARBER` conservando `ADMIN` y la contraseña; ver [perfiles de barbero](docs/catalogo.md#cuentas-y-perfiles-de-barbero). No existe un endpoint genérico de asignación de roles.
 
+## Productos e inventario
+
+ADMIN mantiene productos, entradas y ajustes auditados por sucursal; CLIENT consulta productos activos y stock de sucursales activas (incluido cero); BARBER consulta su propia sucursal. El stock inicial se registra con una entrada y motivo, sin editar tablas. No hay productos iniciales, ventas, pedidos ni reservas de stock. Una venta futura deberá guardar su precio aplicado. Rutas, permisos y ejemplos en [docs/productos.md](docs/productos.md). No se requieren nuevas variables de entorno.
+
 ## Pruebas con PostgreSQL
 
 Crear una base exclusiva llamada **`barberia_auth_test`** y conceder acceso al usuario de pruebas. No utilizar `barberia_db`. Definir `TEST_DB_URL`, `TEST_DB_USERNAME` y `TEST_DB_PASSWORD` para ese entorno. Ejemplo cuando se reutiliza el mismo servidor y usuario local ya configurado:
@@ -178,9 +182,29 @@ $env:TEST_DB_PASSWORD = $env:DB_PASSWORD
 .\mvnw.cmd -Ppostgres-tests clean verify
 ```
 
-El perfil ejecuta **15 pruebas unitarias y 88 de integración** (16 de autenticación, 18 de catálogo, 22 de reservas y 32 de operación de agenda e incidencias). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
+El perfil contiene **15 pruebas unitarias y 99 de integración** (16 de autenticación, 18 de catálogo de servicios/perfiles, 22 de reservas, 32 de operación de agenda e incidencias y 11 de productos/inventario). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
 
 La integración comprueba registro, normalización y restricciones PostgreSQL, duplicados concurrentes, rechazo de asignación de privilegios, login válido/inválido, JWT válido/ausente/expirado/manipulado, cuentas inactivas, varios roles y cambios de permisos actuales, errores JSON e inicialización administrativa sin elevar cuentas existentes.
+
+## Productos e inventario — verificación del 17 de octubre de 2026
+
+- PR #5 confirmado integrado como `c2d46d1`; main se actualizó con `git pull --ff-only` y se creó `feature/product-inventory`. La implementación se entregó inicialmente sin commit, push ni PR; su publicación fue autorizada después para revisión, sin merge.
+- Compilación y empaquetado con Java 25.0.1 y Maven Wrapper correctos. La ejecución completa final aprobó **15 unitarias y 97 integraciones**, sin fallos ni omisiones, exclusivamente en PostgreSQL 18.1 / `barberia_auth_test`. V6 aplicada allí, V1–V5 intactas y Hibernate `validate` correcto.
+- Las 9 integraciones nuevas comprueban SKU normalizado/duplicado (también al actualizar), precio y cantidades inválidos, cantidades fraccionarias rechazadas sin truncar, stock independiente y cero visible, total calculado, concurrencia sin perder unidades ni permitir negativos, rollback conjunto ante fallo del movimiento, permisos acumulativos, sucursal propia de BARBER, inactivos, filtros y privacidad. Se ejecutaron también las regresiones completas de cuentas, catálogo y citas.
+- Una ejecución se detuvo por falta de memoria nativa del JDK. La ejecución final utilizó `MAVEN_OPTS=-Xmx256m` solo en esa sesión y las opciones siguientes, sin guardarlas en la configuración del proyecto:
+
+```powershell
+.\mvnw.cmd -B -ntp '-Dmaven.repo.local=.local/maven-repository' -Ppostgres-tests '-DargLine=-Xmx384m -XX:MaxMetaspaceSize=192m -XX:ReservedCodeCacheSize=96m' '-DreuseForks=false' clean verify
+```
+
+Se reutilizó `TEMP/TMP` corto en `.local/tmp` para las pruebas HTTP de Windows. La regresión de reservas arrancó un servidor HTTP real en la base de pruebas; no se hizo un arranque manual adicional ni se migró `barberia_db`. No se implementaron ventas, pedidos, reservas de stock ni pagos.
+
+## Revisión final de productos e inventario
+
+- Corregida la suma del stock para conservar el total exacto aunque supere el rango de `long`; el contrato sigue devolviendo un número JSON calculado, sin segundo total persistido.
+- Añadidas pruebas de creación concurrente del mismo SKU normalizado (201/409 con una sola fila), suma superior al rango de `long` y rechazo directo de stock negativo por PostgreSQL.
+- Maven Wrapper con las opciones temporales de memoria anteriores y `-Dit.test=ProductInventoryPostgresIT verify`: **BUILD SUCCESS**, compilación/empaquetado, 15 unitarias y las 11 integraciones afectadas aprobadas. Se reutilizan las 88 integraciones de cuentas, catálogo y citas aprobadas en la ejecución completa anterior. No se afirma una nueva ejecución conjunta de las 99 integraciones.
+- V1–V5 intactas, pruebas solo en `barberia_auth_test` y archivos revisados sin secretos o temporales. AGENTS solo actualiza el alcance implementado y conserva sus restricciones. Publicación autorizada para revisión, sin merge.
 
 ## Incidencias de citas — verificación del 17 de octubre de 2026
 
@@ -189,7 +213,7 @@ La integración comprueba registro, normalización y restricciones PostgreSQL, d
 - En la carrera reserva/presencial PostgreSQL puede devolver SQLSTATE 40P01 al escoger una víctima entre inserciones especulativas de ocupaciones. Esa escritura ahora lo traduce a 409, junto con 23P01 y 23505. Las carreras de la suite dan 201/409. No se ejecutó un arranque manual nuevo de la aplicación ni se migró `barberia_db`.
 - `GET /api/v1/users/me/booking-status` expone solo estado y contador propios; `POST /api/v1/admin/clients/{id}/reactivate` exige ADMIN y motivo. La cancelación propia devuelve `bookingStatus` con la advertencia cuando corresponda. Detalles y ejemplos en [docs/citas.md](docs/citas.md#incidencias-consecutivas-y-bloqueo-comercial).
 
-Incidencias de pedidos, pagos, reembolsos, inventario y ventas siguen pendientes.
+En esa entrega seguían pendientes las incidencias de pedidos, pagos, reembolsos, inventario y ventas. El inventario se incorpora en la entrega siguiente.
 
 ## Verificación de operación de agenda — 17 de octubre de 2026
 
