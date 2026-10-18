@@ -1,6 +1,6 @@
 # barberia-api
 
-API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas/JWT, catálogo de servicios, reservas, operación de agenda, incidencias de citas, productos para venta e inventario por sucursal**. Incidencias de pedidos, vinculación de invitados, reprogramación, ventas, pedidos, pagos y reembolsos siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos y ejemplos: [catálogo](docs/catalogo.md), [citas](docs/citas.md) y [productos](docs/productos.md). Mercado Pago será el proveedor de pagos futuro; todavía no hay integración.
+API REST para una barbería con dos sucursales iniciales, sin frontend ni límite fijo de sucursales. Implementa **cuentas/JWT, catálogos, citas/agenda, incidencias, inventario, cobros y ventas presenciales y reportes de ingresos cobrados**. Pedidos, compras/pagos en línea, Mercado Pago, reembolsos y devoluciones siguen pendientes; ver [docs/alcance.md](docs/alcance.md). Contratos: [catálogo](docs/catalogo.md), [citas](docs/citas.md), [productos](docs/productos.md) y [operación presencial y reportes](docs/operacion-presencial.md).
 
 ## Tecnologías y decisiones
 
@@ -15,8 +15,9 @@ API REST para una barbería con dos sucursales iniciales, sin frontend ni límit
 | Seguridad | Spring Security 6.5.11, OAuth2 Resource Server y Nimbus JOSE + JWT 9.37.4 |
 | Contraseñas | BCrypt, coste 12 |
 | Pruebas | JUnit Jupiter, AssertJ, Spring Test/MockMvc y PostgreSQL real |
+| OpenAPI / Swagger UI | springdoc-openapi-starter-webmvc-ui 2.9.1 (línea 2.x para Boot 3) |
 
-Se eligió Nimbus mediante el [soporte JWT de Spring Security](https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html): biblioteca mantenida, integración oficial para emisión y validación, y versiones compatibles administradas por Spring Boot. No se implementa un filtro criptográfico propio ni se necesita un proveedor OAuth externo. Spring Boot administra las dependencias excepto Flyway, fijado en 11.20.3 para el [soporte de PostgreSQL 18](https://documentation.red-gate.com/fd/postgresql-database-277579325.html); el 11.7.2 administrado originalmente advertía que solo se había probado hasta PostgreSQL 17.
+Se eligió Nimbus mediante el [soporte JWT de Spring Security](https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html): biblioteca mantenida, integración oficial para emisión y validación, y versiones compatibles administradas por Spring Boot. No se implementa un filtro criptográfico propio ni se necesita un proveedor OAuth externo. Spring Boot administra las dependencias salvo las versiones explícitas de Flyway y springdoc. Flyway se fija en 11.20.3 para el [soporte de PostgreSQL 18](https://documentation.red-gate.com/fd/postgresql-database-277579325.html); el 11.7.2 administrado originalmente advertía que solo se había probado hasta PostgreSQL 17. La elección de springdoc 2.9.1 se documenta en el apartado de uso local.
 
 ## Requisitos y compilación
 
@@ -79,6 +80,45 @@ V2 (`V2__business_catalog.sql`) añade sucursales, horarios, servicios y perfile
 
 V4 necesita `btree_gist`: la instala en la base conectada si el usuario de migración tiene permisos; alternativamente puede preinstalarla su administrador. No cambia privilegios globales. Consultar [instalación, permisos y garantía de concurrencia](docs/citas.md#extensión-y-permisos) antes de migrar. La nueva protección cubre intervalos distintos que se solapan, no solo comienzos iguales.
 
+V7 añade cobros únicos de citas, ventas presenciales con copias de precios, claves de idempotencia y vínculos desde movimientos de inventario. V1–V6 permanecen intactas. No integra procesamiento de tarjetas ni Mercado Pago.
+
+## Uso local en VS Code y demostración
+
+1. Abrir la carpeta que contiene `pom.xml` con **Archivo → Abrir carpeta** o `code .`. Con el soporte Java/Maven de VS Code instalado, ejecutar **Java: Configure Java Runtime** y seleccionar JDK 25 para el proyecto y Maven. La terminal debe tener el mismo JAVA_HOME; confirmar con `.\mvnw.cmd -version`. No habilitar preview ni versionar ajustes locales del IDE.
+2. Comprobar PostgreSQL con `Get-Service *postgres*`. Si el servicio existente está detenido, iniciarlo con `Start-Service -Name '<nombre observado>'` desde una terminal con permisos para ese servicio. No reinstalar ni recrear bases existentes. Añadir el directorio `bin` de PostgreSQL al PATH de la terminal para usar `psql` y `createdb`.
+3. Reutilizar DB_USERNAME y DB_PASSWORD del entorno según la sección de variables. Para la demostración usar una base dedicada `barberia_demo`, con host y puerto explícitos en DB_URL. El ejemplo siguiente utiliza el servidor local habitual; adaptar el host/puerto si difieren. No imprime la contraseña:
+
+```powershell
+$env:DB_URL = 'jdbc:postgresql://localhost:5432/barberia_demo'
+# DB_USERNAME y DB_PASSWORD deben estar definidos antes de continuar.
+$env:PGHOST = 'localhost'; $env:PGPORT = '5432'
+$env:PGUSER = $env:DB_USERNAME; $env:PGPASSWORD = $env:DB_PASSWORD
+$demoExists = psql -X -w -d postgres -tA -v ON_ERROR_STOP=1 -c "select 1 from pg_database where datname='barberia_demo'"
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo comprobar PostgreSQL.' }
+if ("$demoExists".Trim() -ne '1') {
+    createdb -w --maintenance-db=postgres barberia_demo
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear barberia_demo con el usuario configurado.' }
+}
+Remove-Item Env:PGPASSWORD
+```
+
+4. Configurar JWT_SECRET_BASE64 y JWT_EXPIRATION_SECONDS, e inicializar un ADMIN mediante las variables BOOTSTRAP_ADMIN_* de la sección siguiente. Ejecutar `.\mvnw.cmd spring-boot:run`. Flyway aplica las migraciones que falten; no usar clean, editar tablas ni borrar esquemas. Después del primer arranque, detener, deshabilitar el bootstrap y reiniciar con el mismo entorno de conexión/JWT.
+5. Abrir **http://localhost:8080/swagger-ui/index.html** (o `/swagger-ui.html`, que redirige). OpenAPI JSON: **http://localhost:8080/v3/api-docs**. Sustituir 8080 por SERVER_PORT si se configuró, o por el puerto informado por Tomcat si se usó 0. En Swagger, registrar/iniciar sesión, copiar localmente el accessToken y usar **Authorize → bearerAuth**, pegando solo el token. No pegarlo en documentación o chat ni guardar cabeceras. Las rutas protegidas siguen exigiendo JWT/roles.
+6. Recorrer los requests de [operacion-presencial.md](docs/operacion-presencial.md) con Swagger o ejecutar `scripts/demo-presencial.ps1`. El script usa un ADMIN ya inicializado y mantiene credenciales/tokens en memoria. `-AdjustDemoAppointmentClock` acorta la espera solo en barberia_demo, ajustando la cita recién creada; sin esa opción espera su bloque real. Esta diferencia queda expresamente registrada en la verificación manual.
+
+Se eligió [springdoc 2.9.1](https://github.com/springdoc/springdoc-openapi/releases/tag/v2.9.1), de la [línea compatible con Spring Boot 3](https://springdoc.org/v2/). OpenAPI define el esquema HTTP Bearer y marca registro/login sin autenticación. Los GET de documentación son públicos. Se pueden deshabilitar localmente con SPRINGDOC_API_DOCS_ENABLED=false y SPRINGDOC_SWAGGER_UI_ENABLED=false; esto no altera los permisos de negocio.
+
+Si el JDK de Windows falla al crear el socket interno con `Unable to establish loopback connection` / `Invalid argument: connect`, usar una ruta temporal corta solo en la terminal de ejecución, como se hizo al verificar esta versión:
+
+```powershell
+New-Item -ItemType Directory -Force .local/tmp | Out-Null
+$env:TEMP = (Resolve-Path .local/tmp).Path
+$env:TMP = $env:TEMP
+.\mvnw.cmd spring-boot:run
+```
+
+No se requieren rutas personales versionadas ni cambios globales del JDK. Para equipos con poca memoria, también se puede limitar la JVM del arranque con `'-Dspring-boot.run.jvmArguments=-Xmx384m -XX:MaxMetaspaceSize=192m -XX:ReservedCodeCacheSize=96m'`; son opciones del comando, no configuración permanente.
+
 ## Contrato HTTP de autenticación
 
 Todos los cuerpos usan JSON. Los campos desconocidos se rechazan con 400, incluyendo `roles`, `active` o `id` en el registro.
@@ -112,7 +152,7 @@ Remove-Variable userSecret, userPassword, registration, login, session, headers
 
 Flujo: **registro → login → JWT → endpoint protegido**. Registrar crea una cuenta activa con `CLIENT`; iniciar sesión verifica BCrypt y el estado de la cuenta. El JWT contiene la identidad UUID y tiempos de emisión/expiración. Cada petición protegida valida firma HS256, expiración, emisor y audiencia, y consulta la cuenta en PostgreSQL para obtener su estado y roles actuales. Los permisos no se aceptan del cliente ni de claims de roles del token. Una cuenta desactivada queda rechazada incluso con un JWT aún vigente.
 
-La API es stateless: no crea sesión ni usa cookies de autenticación. Solo registro y login son públicos entre los endpoints implementados; otras rutas quedan denegadas. La raíz ya no es un endpoint de comprobación 404: sin autenticación responde 401. Usar HTTPS al exponer la API. No registrar cuerpos de login/registro ni cabeceras Bearer en clientes o intermediarios.
+La API es stateless: no crea sesión ni usa cookies de autenticación. Registro y login son públicos entre los endpoints de negocio. También son públicos los GET de documentación OpenAPI y Swagger UI; las operaciones de negocio mantienen JWT y roles. La raíz sin autenticación responde 401. Usar HTTPS al exponer la API. No registrar cuerpos de login/registro ni cabeceras Bearer en clientes o intermediarios.
 
 Los errores usan el mismo formato, sin revelar datos internos:
 
@@ -169,7 +209,7 @@ Si esas variables se definieron también en la configuración persistente del ID
 
 ## Productos e inventario
 
-ADMIN mantiene productos, entradas y ajustes auditados por sucursal; CLIENT consulta productos activos y stock de sucursales activas (incluido cero); BARBER consulta su propia sucursal. El stock inicial se registra con una entrada y motivo, sin editar tablas. No hay productos iniciales, ventas, pedidos ni reservas de stock. Una venta futura deberá guardar su precio aplicado. Rutas, permisos y ejemplos en [docs/productos.md](docs/productos.md). No se requieren nuevas variables de entorno.
+ADMIN mantiene productos, entradas y ajustes auditados por sucursal; CLIENT consulta productos activos y stock de sucursales activas (incluido cero); BARBER consulta su propia sucursal. El stock inicial se registra con una entrada y motivo, sin editar tablas. Las ventas presenciales guardan su propio precio aplicado y descuentan stock con movimientos vinculados. No hay productos iniciales, pedidos ni reservas de stock en línea. Rutas y ejemplos en [docs/productos.md](docs/productos.md) y [operación presencial](docs/operacion-presencial.md).
 
 ## Pruebas con PostgreSQL
 
@@ -182,9 +222,20 @@ $env:TEST_DB_PASSWORD = $env:DB_PASSWORD
 .\mvnw.cmd -Ppostgres-tests clean verify
 ```
 
-El perfil contiene **15 pruebas unitarias y 99 de integración** (16 de autenticación, 18 de catálogo de servicios/perfiles, 22 de reservas, 32 de operación de agenda e incidencias y 11 de productos/inventario). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
+El perfil contiene **15 pruebas unitarias y 116 de integración** (16 de autenticación, 18 de catálogo de servicios/perfiles, 22 de reservas, 32 de operación de agenda e incidencias, 11 de productos/inventario y 17 de cobros/ventas/reportes). Las pruebas rechazan cualquier URL que no termine exactamente en `/barberia_auth_test`, sin parámetros, y comprueban `current_database()`. No toman la conexión de negocio como alternativa. Flyway migra únicamente esa base; no se usa H2 ni se ejecutan limpieza, truncado o borrado de esquemas. Los datos aleatorios de prueba se acumulan en ella. La clave JWT de pruebas se genera en memoria y no depende del secreto de la aplicación.
 
 La integración comprueba registro, normalización y restricciones PostgreSQL, duplicados concurrentes, rechazo de asignación de privilegios, login válido/inválido, JWT válido/ausente/expirado/manipulado, cuentas inactivas, varios roles y cambios de permisos actuales, errores JSON e inicialización administrativa sin elevar cuentas existentes.
+
+## Operación presencial y reportes — verificación del 17 de octubre de 2026
+
+- Preparación: main limpia y sincronizada en `475dc20`; rama `feature/in-person-sales-reports`. Java 25.0.1, Boot 3.5.16 y Maven Wrapper conservados. V7 nueva; V1–V6 intactas. La entrega inicial se verificó sin publicar; posteriormente se autorizó commit, push y PR para revisión, sin merge.
+- **Pruebas automatizadas:** compilación/empaquetado y `clean verify` completos, **BUILD SUCCESS**, **15 unitarias y 116 integraciones** sin fallos ni omisiones. Solo `barberia_auth_test`. Se usaron las opciones temporales de memoria y TEMP/TMP ya documentadas; no se cambió la configuración global. Las 17 integraciones nuevas cubren precio histórico, permisos, recursos activos, cobro único concurrente (201/409), idempotencia simultánea (201/200), ventas competidoras (201/409), varias líneas, rollback, snapshots y límites de día/semana/mes por fecha de pago, además de OpenAPI/Bearer.
+- **Recorrido HTTP de demostración separado de JUnit:** se creó `barberia_demo` vacía y Flyway aplicó V1–V7 normalmente, todas correctas. El primer intento HTTP detectó el problema de socket interno del JDK con la ruta temporal larga de Windows; se resolvió usando `.local/tmp` solo en ese proceso. No se limpió ni migró `barberia_db` ni se borraron datos existentes.
+- Arranque real mediante Maven Wrapper: bootstrap ADMIN, puerto **49658**; confirmación del rol y reinicio con bootstrap deshabilitado, puerto **53702**. Se ejecutó `scripts/demo-presencial.ps1 -BaseUrl http://localhost:53702 -AdjustDemoAppointmentClock`: crear BARBER → registrar CLIENT → reservar → iniciar/completar → cobrar CASH → consulta propia → crear producto → entrada de 10 → vender 2 con CARD → repetir venta → consultar reporte. El segundo cobro dio 409; el reintento de venta 200 y la misma venta, con **8 unidades** restantes.
+- Resultados del día local 2026-10-17: servicio **100.00 MXN**, productos **99.80 MXN**, combinado **199.80 MXN**. Son datos ficticios de demostración; CARD confirma un pago externo simulado, sin datos de tarjeta. El ajuste autorizado cambió únicamente inicio/fin de la cita recién creada en barberia_demo para evitar esperar el bloque real; estados y cobros se registraron por HTTP con Clock real. No se presenta ese ajuste como una hora real transcurrida.
+- Swagger UI verificado por HTTP 200 en **http://localhost:53702/swagger-ui/index.html** y OpenAPI en `/v3/api-docs`, con esquema Bearer. Los procesos iniciados para la verificación quedaron detenidos: esa URL refleja el puerto comprobado, no un servidor que se haya dejado activo. Un arranque normal sin SERVER_PORT vuelve a usar 8080.
+
+Requests y reglas: [operacion-presencial.md](docs/operacion-presencial.md). Mercado Pago, pedidos, compras/pagos en línea, reservas de stock en línea, reembolsos y devoluciones siguen pendientes. Los reportes son ingresos cobrados, sin gastos ni reembolsos implementados.
 
 ## Productos e inventario — verificación del 17 de octubre de 2026
 

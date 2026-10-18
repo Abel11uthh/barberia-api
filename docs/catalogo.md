@@ -1,6 +1,6 @@
 # Sucursales, servicios y barberos
 
-La entrega del catálogo incorporó los módulos `branches`, `services` y `barbers`. Conserva Java 25, Spring Boot 3.5.16, el login JWT y las convenciones de errores existentes. Las entregas posteriores de [citas](citas.md) añaden reservas y operación de agenda, incluida atención inmediata y bloqueos individuales. Inventario, ventas y pagos siguen pendientes.
+La entrega del catálogo incorporó los módulos `branches`, `services` y `barbers`. Conserva Java 25, Spring Boot 3.5.16, el login JWT y las convenciones de errores existentes. Las entregas posteriores de [citas](citas.md) añaden reservas y operación de agenda, incluida atención inmediata y bloqueos individuales. [Productos](productos.md) incorpora inventario y [operación presencial](operacion-presencial.md) incorpora ventas, cobros y reportes. Los pagos en línea siguen pendientes.
 
 ## Permisos y endpoints
 

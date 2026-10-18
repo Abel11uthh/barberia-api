@@ -17,13 +17,19 @@ public class InventoryMovement {
     @Column(nullable = false, updatable = false) private long quantityAfter;
     @Column(nullable = false, length = 500, updatable = false) private String reason;
     @Column(nullable = false, updatable = false) private Instant occurredAt;
+    @Column(updatable = false) private UUID saleId;
 
     protected InventoryMovement() { }
     public InventoryMovement(UUID productId, UUID branchId, UUID actorId, String kind, long delta,
                              long quantityBefore, long quantityAfter, String reason, Instant occurredAt) {
+        this(productId,branchId,actorId,kind,delta,quantityBefore,quantityAfter,reason,occurredAt,null);
+    }
+    public InventoryMovement(UUID productId, UUID branchId, UUID actorId, String kind, long delta,
+                             long quantityBefore, long quantityAfter, String reason, Instant occurredAt, UUID saleId) {
         id = UUID.randomUUID(); this.productId = productId; this.branchId = branchId; this.actorId = actorId;
         this.kind = kind; this.delta = delta; this.quantityBefore = quantityBefore;
         this.quantityAfter = quantityAfter; this.reason = reason; this.occurredAt = occurredAt;
+        this.saleId = saleId;
     }
     public UUID getId() { return id; }
     public UUID getProductId() { return productId; }
@@ -35,4 +41,5 @@ public class InventoryMovement {
     public long getQuantityAfter() { return quantityAfter; }
     public String getReason() { return reason; }
     public Instant getOccurredAt() { return occurredAt; }
+    public UUID getSaleId() { return saleId; }
 }

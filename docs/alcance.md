@@ -4,7 +4,7 @@
 
 La fuente de requisitos de negocio es la especificación proporcionada por el usuario en el adjunto `Texto pegado.txt`, incorporada en este documento. Se complementa con las instrucciones de preparación de la base, su actualización a Java 25 LTS, cuentas/autenticación JWT y los adjuntos posteriores de catálogo/perfiles, reserva de citas, operación de agenda e incidencias consecutivas de citas.
 
-Esta entrega añade catálogo de productos para venta e inventario auditable por sucursal. Ventas, pedidos, pagos y reembolsos siguen pendientes. Las demás decisiones abiertas se conservan; Mercado Pago está elegido, con integración pendiente.
+Esta entrega añade cobros de citas completadas, ventas presenciales con inventario transaccional y reportes de ingresos cobrados. También incorpora OpenAPI/Swagger UI y un recorrido HTTP de demostración. Pedidos, pagos en línea, Mercado Pago, reembolsos y devoluciones siguen pendientes.
 
 ## Objetivo
 
@@ -14,7 +14,7 @@ API REST para una barbería con dos sucursales. Busca reducir esperas mediante c
 
 Java 25 LTS sin características preview, Spring Boot 3.5.16, PostgreSQL y Maven Wrapper. Monolito organizado por módulos de negocio, con capas controller, service y repository, además de DTOs y entidades. Cuentas y JWT incorporan Spring Security, Nimbus JOSE + JWT, BCrypt y Flyway 11.20.3 con soporte PostgreSQL. Hibernate valida el esquema con `ddl-auto=validate` después de las migraciones.
 
-El flujo es controller → service → repository: contrato HTTP y validación de entrada, casos de uso y reglas de negocio, y acceso a datos, respectivamente. Existen los módulos `accounts`, `auth`, `branches`, `services`, `barbers` y `appointments`, además de errores HTTP y paginación compartidos. No se anticipan módulos ni entidades de otros casos de uso.
+El flujo es controller → service → repository: contrato HTTP y validación de entrada, casos de uso y reglas de negocio, y acceso a datos, respectivamente. Existen `accounts`, `auth`, `branches`, `services`, `barbers`, `appointments`, `products`, `payments`, `sales` y `reports`, además de componentes compartidos. No se anticipan módulos ni entidades de otros casos de uso.
 
 ## Usuarios y permisos
 
@@ -91,8 +91,16 @@ Las cancelaciones de citas confirmadas, las transiciones de atención, NO_SHOW y
 
 - Servicios, productos y total combinado.
 - Filtros por día, semana, mes y sucursal.
-- Distinguir cobros, reembolsos e ingresos netos.
+- Esta versión presenta ingresos cobrados y sus cantidades de cobros/ventas. Los reembolsos/devoluciones no existen aún: no presenta ingresos netos después de reembolsos.
 - No denominarlos ganancias: no registraremos gastos.
+
+## Operación presencial implementada
+
+- V7 conserva V1–V6. Cobra una sola vez citas COMPLETED con su total histórico, método CASH/CARD, sucursal, actor e instante real; PostgreSQL garantiza unicidad por cita. BARBER solo sus citas, con perfil activo; ADMIN ambas sucursales. CLIENT consulta únicamente el estado de pago propio sin datos administrativos.
+- Ventas de varios productos activos con cantidades enteras positivas, sin duplicados ni precios impuestos por el request. Se guardan nombre, SKU, precio y cantidad aplicados. La sucursal de BARBER procede de su perfil; ADMIN la indica. Ventas nuevas exigen sucursal activa.
+- Clave UUID de idempotencia por actor/operación. Reintentos equivalentes devuelven la misma venta; contenido diferente da 409. Bloqueos PostgreSQL con orden estable de productos evitan sobreventa. Venta, líneas, descuentos y movimientos SALE vinculados se confirman o revierten juntos.
+- Reportes solo ADMIN según fecha del pago en America/Mexico_City, con intervalos [inicio,fin): día local, lunes a lunes y primer día de mes a primer día del siguiente. Servicios/productos/combinado y cantidades, sin contar citas no cobradas. No son ganancias ni ingresos netos después de reembolsos.
+- OpenAPI/Swagger UI documentan Bearer JWT y las rutas. Recorrido HTTP reproducible en `scripts/demo-presencial.ps1`; el ajuste temporal opcional y explícito solo modifica la cita recién creada en barberia_demo, sin falsear el Clock de cobros. Detalles en [operacion-presencial.md](operacion-presencial.md).
 
 ## Cuentas y autenticación JWT implementadas
 
@@ -146,21 +154,21 @@ Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
 - Cancelación CLIENT con al menos 60 minutos exactos; personal sin límite de anticipación y con motivo obligatorio. Se conservan actor, fecha, motivo y origen CLIENT/STAFF. La incidencia de una cancelación CLIENT se aplica en V5; los reembolsos siguen pendientes.
 - Bloqueos ADMIN con inicio anterior al fin, no pasado, motivo y auditoría; pueden empezar a minutos arbitrarios. Solapamientos se rechazan, sin desplazar ni cancelar citas. Cancelación conserva fila e historial.
 - V4 conserva V1/V2/V3, adapta reservas existentes y crea barber_blocks y agenda_occupations. Exclusión GiST por barbero y rango [inicio, fin), usando btree_gist en la base destino. Triggers mantienen fuente/ocupación atómicas; conflictos 23P01 y víctimas 40P01 de inserciones simultáneas devuelven 409. COMPLETED y NO_SHOW mantienen ocupación; CANCELLED la libera. No se modifican privilegios globales.
-- Instalación de extensión, transiciones, rutas y ejemplos en [citas.md](citas.md). Sin reprogramación, ventas ni pagos.
+- Instalación de extensión, transiciones, rutas y ejemplos en [citas.md](citas.md). Reprogramación y pagos en línea siguen pendientes.
 
 ## Incidencias de citas implementadas
 
 - V5 conserva V1–V4 y añade contador consecutivo por cuenta, bloqueo comercial separado de `active` e historial de eventos por cita y actor. Cancelación CLIENT y NO_SHOW suman; cancelación del personal e invitados no penalizan. COMPLETED reinicia el contador, sin levantar un bloqueo ya aplicado.
 - La segunda incidencia consecutiva produce advertencia JSON; la tercera bloquea nuevas reservas. Se mantiene login y la consulta/cancelación de citas existentes. La comprobación comercial es central para futuras compras, aún no implementadas.
 - ADMIN reactiva con motivo obligatorio, reinicia el contador y conserva historial. Se ordena por confirmación de la transición válida, no por inicio de cita. Una inasistencia marcada después de la ventana se rechaza sin alterar la racha. PostgreSQL serializa los eventos por cuenta con bloqueo de fila y secuencia; repetir una transición no duplica el evento.
-- Endpoints, respuestas y ejemplo lunes sin resultado → martes COMPLETED → intento tardío el miércoles en [citas.md](citas.md). El contador de pedidos, reembolsos, pagos y ventas siguen pendientes.
+- Endpoints, respuestas y ejemplo lunes sin resultado → martes COMPLETED → intento tardío el miércoles en [citas.md](citas.md). El contador de pedidos, reembolsos y pagos en línea siguen pendientes.
 
 ## Productos e inventario implementados
 
 - V6 conserva V1–V5 y añade productos para venta, existencias por producto y sucursal e historial auditable de entradas y ajustes. No incluye materiales de trabajo ni productos o precios iniciales. El SKU se normaliza a mayúsculas y PostgreSQL protege su unicidad; el precio es positivo y tiene dos decimales.
 - ADMIN crea, actualiza y desactiva productos, registra entradas positivas y ajustes firmados con motivo, actor, sucursal e instante, y consulta movimientos. CLIENT busca productos activos y existencias de sucursales activas, incluido cero; BARBER ve solo su sucursal. Las consultas son paginadas, con filtros y ordenaciones controlados.
 - La primera entrada crea la fila de stock. El stock por sucursal nunca puede ser negativo. Un bloqueo de fila del producto serializa las operaciones concurrentes incluso al crear la primera fila; stock y movimiento son una sola transacción. Desactivar producto o sucursal conserva el historial e impide nuevas operaciones de stock.
-- El total general se calcula desde las existencias por sucursal, sin un segundo total persistido. Las futuras ventas guardarán su propio precio aplicado. Rutas y ejemplos en [productos.md](productos.md). Aún no hay ventas, reservas de stock, pedidos ni pagos.
+- El total general se calcula desde las existencias por sucursal, sin un segundo total persistido. Las ventas presenciales guardan su propio precio aplicado. Rutas y ejemplos en [productos.md](productos.md). Las reservas de stock para compras en línea, pedidos y pagos en línea siguen pendientes.
 
 ## Etapas
 
@@ -170,18 +178,18 @@ Rutas, DTOs, permisos, ejemplos y garantías: [citas.md](citas.md).
 4. Reportes.
 5. Pedidos, pagos en línea, recogidas y reembolsos.
 
-Estas son las etapas indicadas en la especificación. La primera está completada; la segunda incorpora cuentas, catálogo de servicios, reservas, operación de agenda e incidencias de citas. De la tercera se implementan ahora productos e inventario; ventas y cobros siguen pendientes. Reprogramación e incidencias de pedidos también permanecen pendientes; documentar otros requisitos no implica haberlos implementado.
+Estas son las etapas indicadas en la especificación. La primera está completada; la segunda incorpora cuentas, catálogo de servicios, reservas, operación de agenda e incidencias de citas. La tercera incluye productos, inventario, ventas y cobros presenciales; la cuarta incorpora reportes de ingresos cobrados. Reprogramación, incidencias de pedidos y toda la etapa de pagos/pedidos en línea permanecen pendientes; documentar otros requisitos no implica haberlos implementado.
 
 ## Fuera de esta tarea
 
 - Reprogramación, incidencias de pedidos y vinculación/identificación de invitados.
 - Gestión genérica de usuarios/roles, traslados de barberos, recuperación de contraseña y verificación de correo.
-- Ventas, reservas de stock para compras en línea y cobros.
+- Compras/pedidos en línea, reservas de stock para compras en línea, pagos en línea, reembolsos y devoluciones.
 - Refresh tokens y revocación individual de access tokens.
-- Pagos e integraciones de pagos.
+- Mercado Pago e integraciones bancarias.
 - Docker, infraestructura y despliegue.
 - Carpetas vacías para posibles módulos futuros.
-- Merge de feature/product-inventory.
+- Merge de feature/in-person-sales-reports.
 
 ## Decisiones pendientes
 
@@ -190,6 +198,15 @@ Los siguientes puntos permanecen abiertos; no se adoptan valores predeterminados
 - Control de duplicados de invitados (ya se confirmó identificación mediante nombre y teléfono, sin cuenta automática).
 - Vencimientos de recogida fuera del horario de atención.
 - Procedimiento de reembolsos presenciales.
+
+## Verificación de operación presencial y reportes — 17 de octubre de 2026
+
+- main limpia y sincronizada, base `475dc20`; creada `feature/in-person-sales-reports`. V7 nueva, V1–V6 intactas. La entrega inicial se verificó sin publicar; posteriormente se autorizó commit, push y PR para revisión, sin merge.
+- Java 25.0.1 y Maven Wrapper: compilación/empaquetado y suite completa `clean verify` **BUILD SUCCESS**: 15 unitarias y 116 integraciones sin fallos ni omisiones, exclusivamente en barberia_auth_test. Se verificaron todas las regresiones y 17 integraciones nuevas de cobros, ventas, reportes y OpenAPI.
+- Cobros simultáneos 201/409; misma clave de venta simultánea 201/200 sin segundo descuento; ventas competidoras 201/409 sin sobreventa. Snapshots, varias líneas, falta de stock, rollback tras escribir venta/stock, permisos, recursos inactivos y límites de periodos por pago aprobados.
+- Recorrido HTTP de demostración separado de JUnit en barberia_demo, creada vacía: Flyway V1–V7 aplicadas correctamente. Bootstrap ADMIN y arranque real en 49658; reinicio con bootstrap deshabilitado en 53702. Flujo completo de requests y consultas, segundo cobro 409, replay de venta 200, stock final 8. Ingresos ficticios: servicios 100.00, productos 99.80, combinado 199.80 MXN.
+- Ajuste temporal expresamente autorizado solo en la cita recién creada en barberia_demo; no altera Clock ni fechas de cobro, ni simula una hora real transcurrida. Swagger HTTP 200 en http://localhost:53702/swagger-ui/index.html y esquema Bearer en /v3/api-docs. Los procesos propios se detuvieron. El fallo inicial de socket del JDK se resolvió con TEMP/TMP corto solo para el proceso; opciones de memoria igualmente temporales. Sin cambios globales ni rutas personales nuevas versionadas.
+- No se limpió ni migró barberia_db ni se borraron datos existentes. Pendientes: Mercado Pago, pedidos, compras/pagos en línea, reservas de stock en línea, reembolsos/devoluciones. Detalles reproducibles en README y [operacion-presencial.md](operacion-presencial.md).
 
 ## Verificación de productos e inventario — 17 de octubre de 2026
 
